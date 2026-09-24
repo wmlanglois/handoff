@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+runs/
+.pytest_cache/
+.pytest_tmp/
+
+# Machine-specific configuration: addresses, usernames, key paths, out-of-repo directories.
+# The committed template is fleet_settings.example.py.
+fleet_settings.local.py
+
+# Generated project packages, logs, and local environments are not publication material.
+intake/
+*.log
+.env
+.env.*
+.venv/
+venv/

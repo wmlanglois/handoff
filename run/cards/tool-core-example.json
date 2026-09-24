@@ -1,0 +1,10 @@
+{
+  "name": "hello-tool-core",
+  "worker": "my-worker",
+  "brief": "Create hello.py in your job workspace with a greet() function returning the exact string 'hello'. Use files.write for the final deliverable. Do not modify hello.py after that write.",
+  "artifact": "hello.py",
+  "tools": true,
+  "done_when": ["hello.greet() returns 'hello'"],
+  "oracle": "import os,sys\nsys.path.insert(0, os.getcwd())\nimport hello\nassert hello.greet() == 'hello'\n",
+  "oracle_covers_done_when": true
+}

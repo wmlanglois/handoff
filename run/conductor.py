@@ -395,11 +395,17 @@ def advance(goal_id, executor, *, capacity=1, max_assignments=None, root=None, e
             cards = [cd for cd, k, w in chosen]
         if not cards:
             break
-        limits = (goals.state(goal_id, root).get("limits") or {})
+        st_now = goals.state(goal_id, root)
+        limits = (st_now.get("limits") or {})
+        assignments = st_now.get("assignments") or {}
         allowed = []
         for card in cards:
-            hit = projectpkg.limit_hits(card, limits)
             display = card.get("assignment") or card["name"]
+            # Scan the stored contract, not the rendered card (mirrors orchestrate.py). card_for
+            # pastes the whole scope into the brief, and a scope that says "Never delete files"
+            # would match the never-rule against its own statement.
+            stored = (assignments.get(display) or {}).get("contract")
+            hit = projectpkg.limit_hits(stored or card, limits)
             if hit:
                 echo("  refused {0}: {1}".format(display, hit))
                 goals.record(goal_id, card["criterion_id"], "parked-undefined", "",

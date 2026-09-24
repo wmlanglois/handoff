@@ -76,6 +76,54 @@ def ensure(package: Path, folder: Path, name: str) -> dict:
     return doc
 
 
+def set_first_use(package: Path, *, project_kind: str = "", intake_mode: str = "") -> dict:
+    """Record explicit setup choices separately from the project path; never infer Git intent."""
+    doc = load_project(package)
+    if project_kind:
+        previous = doc.get("project_kind")
+        if previous and previous != project_kind:
+            raise SystemExit("project kind is already {0}; refusing to change it silently".format(previous))
+        doc["project_kind"] = project_kind
+    if intake_mode:
+        previous = doc.get("intake_mode")
+        if previous and previous != intake_mode and (package / "scoped.md").exists():
+            raise SystemExit("scope already exists; refusing to change the intake path")
+        doc["intake_mode"] = intake_mode
+    save_project(package, doc)
+    return doc
+
+
+def validated_brief(source: Path) -> bytes:
+    """Read-only validation, so a bad brief cannot leave a newly created package behind."""
+    source = Path(source).resolve()
+    if not source.is_file():
+        raise SystemExit("brief is not a file: {0}".format(source))
+    raw = source.read_bytes()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise SystemExit("brief must be UTF-8 text")
+    if not content.strip():
+        raise SystemExit("brief is empty")
+    return raw
+
+
+def import_brief(package: Path, source: Path) -> Path:
+    """Keep a supplied brief as context, never as confirmed intake answers or approved scope."""
+    source = Path(source).resolve()
+    raw = validated_brief(source)
+    target = Path(package) / "brief.md"
+    if target.exists() and target.read_bytes() != raw:
+        raise SystemExit("package already has a different brief.md; refusing to overwrite it")
+    if not target.exists():
+        target.write_bytes(raw)
+    doc = load_project(package)
+    doc["brief_source"] = str(source)
+    doc["brief_sha256"] = hashlib.sha256(raw).hexdigest()
+    save_project(package, doc)
+    return target
+
+
 def observe(folder: Path, skip: Path = None) -> str:
     """Factual listing. No model, no summary of intent."""
     folder = Path(folder).resolve()
@@ -491,7 +539,7 @@ def draft_prompt(package: Path, name: str) -> str:
     st = intake_state(package, name) or {"answers": {}}
     lines = [
         "You are drafting proposed answers to a fixed intake. You are not the user.",
-        "Use only the observed folder. Do not invent facts that are not in that file list.",
+        "Use the observed folder and any supplied brief as context. Do not invent facts.",
         "Return a JSON object whose keys are question ids and whose values are proposed answer strings.",
         "A proposal is not something the user said. Do not confirm it.",
         "Branching is fixed: Q0 A requires S6a and not S6b. Q0 B requires S6b and not S6a.",
@@ -499,8 +547,12 @@ def draft_prompt(package: Path, name: str) -> str:
         "",
         observed,
         "",
-        "Questions:",
     ]
+    brief = Path(package) / "brief.md"
+    if brief.is_file():
+        lines += ["", "User-supplied existing brief (context, NOT confirmed answers):",
+                  brief.read_text(encoding="utf-8")]
+    lines += ["", "Questions:"]
     for qid, _layer, prompt, opts, branches in intake.QUESTIONS:
         lines.append("{0} branches={1}".format(qid, ",".join(sorted(branches))))
         lines.append(prompt)

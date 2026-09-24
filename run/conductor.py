@@ -871,7 +871,7 @@ def _print_approve(gid):
           "stopped before assignment approval; no worker was started".format(gid))
 
 
-def _resume(package):
+def _resume(package, *, allow_draft=False):
     """First incomplete step only. Does not approve, dispatch, or rewrite user files."""
     import projectpkg
     import intake
@@ -885,15 +885,18 @@ def _resume(package):
 
     st = projectpkg.intake_state(package, name)
     if st is None or not intake.is_done(st):
-        if not projectpkg.proposed_path(package).is_file():
-            if os.environ.get("FLEET_ASSIST") or shutil.which("claude"):
-                try:
-                    _cmd_assist_run(package, name)
-                except SystemExit as exc:
-                    print("drafts were not written: {0}".format(exc))
-            else:
-                print("no claude command on PATH and FLEET_ASSIST is unset; no drafts were written.")
-                print("a draft would not be an answer. Write the intake answers yourself.")
+        mode = doc.get("intake_mode") or ""
+        if mode == "defer" or (not mode and not projectpkg.proposed_path(package).is_file()):
+            print("stopped before intake drafting; no model call was made")
+            print("resume with start <project-folder> --name {0} --package {1} "
+                  "--project-kind <local|git-existing|git-new> "
+                  "--intake-mode <guided|brief> [--brief FILE] [--draft]".format(name, package))
+            raise SystemExit(2)
+        if allow_draft and not projectpkg.proposed_path(package).is_file():
+            try:
+                _cmd_assist_run(package, name)
+            except SystemExit as exc:
+                print("drafts were not written: {0}".format(exc))
         _print_intake_stop(package, name)
         raise SystemExit(2)
 
@@ -1038,8 +1041,56 @@ def _cmd_start(a):
     if not folder.is_dir():
         raise SystemExit("not a folder: {0}".format(folder))
     package = Path(a.package).resolve() if a.package else projectpkg.default_package(a.name)
+    print("project root (relative paths resolve from the current shell directory): {0}".format(folder))
+    print("intake package: {0}".format(package.resolve()))
+    existing = (package / "project.json").is_file()
+    prior = projectpkg.load_project(package) if existing else {}
+    mode = a.intake_mode or prior.get("intake_mode") or ""
+    kind = a.project_kind or prior.get("project_kind") or ""
+    import intake
+    prior_intake = projectpkg.intake_state(package, a.name) if existing else None
+    legacy_ready = existing and ((prior_intake is not None and intake.is_done(prior_intake))
+                                 or projectpkg.proposed_path(package).is_file())
+    if (not mode or not kind) and not legacy_ready:
+        print("choose before creating the package or calling a model:")
+        print("  --project-kind local | git-existing | git-new")
+        print("  --intake-mode guided | brief | defer")
+        print("guided: answer intake questions; add --draft only if you want a model to propose answers")
+        print("brief: add --brief FILE; it becomes unconfirmed context for those same questions")
+        print("defer: record only local project state and return later, with no model call")
+        raise SystemExit(2)
+    if a.draft and mode == "defer":
+        raise SystemExit("--draft cannot be used with --intake-mode defer")
+    if mode == "brief" and not (a.brief or (package / "brief.md").is_file()):
+        raise SystemExit("--intake-mode brief requires --brief FILE (or an existing package brief.md)")
+    if a.brief and mode != "brief":
+        raise SystemExit("--brief is only used with --intake-mode brief")
+    if a.brief:
+        projectpkg.validated_brief(Path(a.brief))
+    if not existing and kind == "git-existing":
+        probe = subprocess.run(["git", "-C", str(folder), "rev-parse", "--show-toplevel"],
+                               capture_output=True, text=True)
+        if probe.returncode:
+            raise SystemExit("--project-kind git-existing requires a Git worktree")
+    if not existing and kind == "git-new":
+        probe = subprocess.run(["git", "-C", str(folder), "rev-parse", "--show-toplevel"],
+                               capture_output=True, text=True)
+        if not probe.returncode:
+            raise SystemExit("folder is already inside a Git worktree; choose git-existing instead")
+        init = subprocess.run(["git", "init", str(folder)], capture_output=True, text=True)
+        if init.returncode or not (folder / ".git").exists():
+            raise SystemExit("git init failed: {0}".format((init.stderr or init.stdout)[:500]))
+        print("initialized local Git repository; no remote was created and nothing was pushed")
     projectpkg.ensure(package, folder, a.name)
-    return _resume(package)
+    projectpkg.set_first_use(package, project_kind=kind, intake_mode=mode)
+    if a.brief:
+        target = projectpkg.import_brief(package, Path(a.brief))
+        print("stored existing brief as unconfirmed context: {0}".format(target))
+    if mode == "defer":
+        print("deferred. No model was called; scope, plan, map, and workers were not started.")
+        print("resume with the same start command and --intake-mode guided or brief")
+        raise SystemExit(2)
+    return _resume(package, allow_draft=a.draft)
 
 
 def _cmd_continue(a):
@@ -1661,6 +1712,12 @@ def main(argv=None):
     p.add_argument("--name", required=True, help="project name; one path segment")
     p.add_argument("--package", default=None,
                    help="package directory (default: intake/packages/<name>/ under the fleet root)")
+    p.add_argument("--project-kind", choices=("local", "git-existing", "git-new"), default=None,
+                   help="record local/Git intent separately from the project path; git-new runs local git init only")
+    p.add_argument("--intake-mode", choices=("guided", "brief", "defer"), default=None,
+                   help="explicit first-use choice; omit on an existing package to keep its saved mode")
+    p.add_argument("--brief", default=None, help="UTF-8 existing brief, stored as unconfirmed context")
+    p.add_argument("--draft", action="store_true", help="allow one model call for proposed intake drafts")
     p.set_defaults(fn=_cmd_start)
 
     p = sub.add_parser("continue", help="resume an existing package at the first incomplete step")

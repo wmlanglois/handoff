@@ -30,7 +30,7 @@ These are not the job:
 
 ## First use
 
-`python run/conductor.py start <folder> --name <project> [--package <path>]`
+`python run/conductor.py start <folder> --name <project> [--package <path>] [--project-kind local|git-existing|git-new] [--intake-mode guided|brief|defer] [--brief FILE] [--draft]`
 
 Default package when `--package` is omitted: `intake/packages/<name>/` under this repository.
 
@@ -39,10 +39,16 @@ Default package when `--package` is omitted: `intake/packages/<name>/` under thi
 | `folder` | Bound as `project_root`. `observed.md` is a file list, with no model. At 200 files the list says it stopped. |
 | `--name` | One path segment. |
 | `--package` | Package directory. |
+| `--project-kind` | Required when choosing first use: local folder, existing Git worktree, or a new local Git repo (`git init` only; no remote/push). Stored separately from `project_root`. |
+| `--intake-mode` | Guided questions, existing brief as context, or a no-token defer. Required on first use. |
+| `--brief` | UTF-8 file for brief mode. Stored as `brief.md`; never treated as confirmed answers or an approved scope. |
+| `--draft` | Explicitly allow one model call for proposed intake answers in guided/brief mode. No automatic call merely because Claude is installed. |
 
-Package files: `project.json`, `observed.md`, `proposed.json`, `<name>.json`, `<name>.md`, `scoped.md`, `approval.json`. Kickoff with `--package` also writes `kickoff.md`.
+Package files: `project.json`, `observed.md`, optional `brief.md` and `proposed.json`, `<name>.json`, `<name>.md`, `scoped.md`, `approval.json`. Kickoff with `--package` also writes `kickoff.md`.
 
-`start` resumes the first incomplete step. If intake is missing and Claude CLI is on `PATH` (or `FLEET_ASSIST` is set), it calls the drafter once to write `proposed.json`; ask before sending the observed folder and questions to that model. Without a drafter it prints the self-guided intake commands. It does not overwrite `observed.md` or `scoped.md`, confirm a draft, approve the plan, or start a worker. A rejected plan, or a scope page that was edited and approved again, is planned again on the same goal id. `--as` records an actor name but is not human authentication; an agent must not self-confirm or self-approve.
+`start` prints the absolute project/package paths first; relative paths resolve against the current shell directory. With no first-use choices it stops before creating files or calling a model. `defer` creates minimal local package state and stops with no model call. Guided/brief modes print the same intake questions; only explicit `--draft` calls the drafter once, and `assist` remains an explicit later option. A brief supplies context but cannot skip answer confirmation, scope review, or approvals. `start` does not overwrite `observed.md` or `scoped.md`, confirm a draft, approve the plan, or start a worker. A rejected plan, or a scope page that was edited and approved again, is planned again on the same goal id. `--as` records an actor name but is not human authentication; an agent must not self-confirm or self-approve.
+
+Existing packages with confirmed intake or already-recorded drafts continue without retroactive first-use choices. No new model call is inferred from that compatibility path.
 
 Goal criteria come from the confirmed S2 lines and, when a machine can check the work, from V2 and V3. A done-when outcome must set `integrator` to `handoff` and a `dest`. The integration group and frozen check are recorded before assignment approval. `approve` approves the plan; `approve-map` freezes the project baseline for autonomous mode.
 

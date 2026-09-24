@@ -92,9 +92,9 @@ Sends an unapproved proposed plan back to the planner on the same goal. Records 
 
 Packet-only mode dispatches the approved plan and stops; **packet completion is not project completion**. Autonomous mode adds one connected proof: approved full `scoped.md` → approved interface map → receipt-bound candidate → one fresh-process launch journey → one owned, evidence-based repair if needed → a promoted checkpoint. The reusable entry point is `run/conductor.py`.
 
-`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME] [--delegate NAME]`
+`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME] [--plan-file PATH] [--delegate NAME]`
 
-`--decisions` and `--seconds` are required integers. `--workers` is a comma-separated list of worker names. Default is `cluster`. `--map` is a JSON file and is accepted only together with `--as`. The file is one object: `components` is a list of `{id, path, provides, calls?}`, and `milestone` is `{id, command}` where `command` is a list of strings, the first usually the Python executable and the last the launcher path. A person can skip `--map` and approve the derived map with `approve-map --from-proposed` instead.
+`--decisions` and `--seconds` are required integers. `--workers` is a comma-separated list of worker names. Default is `cluster`. `--plan-file` is a JSON object with an `outcomes` list of contracts; when given, the ordinary planner proposes that pre-written plan instead of calling the model, and it is still gated, human-approved and mapped through the same path (a rejected supplied plan is reported, not model-replaced). `--map` is a JSON file and is accepted only together with `--as`. The file is one object: `components` is a list of `{id, path, provides, calls?}`, and `milestone` is `{id, command}` where `command` is a list of strings, the first usually the Python executable and the last the launcher path. A person can skip `--map` and approve the derived map with `approve-map --from-proposed` instead.
 
 Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately from the North Star, and sets autonomous mode with a durable budget. One entry walks the ordinary path with a human stop at each consequential step: from a freshly approved scope with no plan it runs the ordinary planner and stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE` when the intake done-when answers are not in yet); once the plan is approved it derives and proposes an interface map and stops at `AWAITING_MAP_APPROVAL`; once the map is approved it runs. `--delegate NAME` runs unattended (overnight): the operator pre-approves the proposed plan and the derived map as NAME's standing approval, and the loop proceeds without stopping at the gates. This is the operator's explicit up-front approval, not a silent one; the budget, the never-rules, and consequential sign-offs remain hard bounds. Without `--delegate` it never silently approves a plan or a map. With no approved map the loop stops `BLOCKED`. `--decisions 0` is a visible choice, never a hidden zero.
 
@@ -123,6 +123,10 @@ A person accepts a criterion no machine can check.
 `python run/conductor.py status <goal_id>`
 
 Prints where the goal stands, including whether `complete()` is true.
+
+`python run/conductor.py fingerprint [--expect HASH]`
+
+Prints a hash of the controller source (the `run/` package). Capture it before a live or evaluation run and pass it back with `--expect`; the command exits non-zero if the harness changed, so a wrapper can refuse to continue. This addresses a run being edited under itself: give each concurrent session its own checkout (a separate git worktree), and do not edit the harness while a run is in flight.
 
 `python run/conductor.py memory <action> [flags]`
 

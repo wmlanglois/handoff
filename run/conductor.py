@@ -1785,6 +1785,34 @@ def consumer_contract_problems(contract):
     return problems
 
 
+def harness_fingerprint(root=None):
+    """Issue #9: a stable hash of the controller source, so a live/evaluation run can tell whether
+    the harness was edited under it (a second session editing this same checkout mid-run). Hashes the
+    .py files under `root` (default: the run/ package this module lives in), sorted, excluding caches.
+    Two sessions should each use an isolated checkout; when they do not, this makes drift detectable
+    instead of silent."""
+    import hashlib
+    base = Path(root) if root else Path(__file__).resolve().parent
+    h = hashlib.sha256()
+    for p in sorted(base.rglob("*.py")):
+        if "__pycache__" in p.parts:
+            continue
+        h.update(p.relative_to(base).as_posix().encode("utf-8") + b"\0")
+        h.update(p.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def _cmd_fingerprint(a):
+    fp = harness_fingerprint()
+    print(fp)
+    expect = getattr(a, "expect", None)
+    if expect and expect != fp:
+        raise SystemExit("HARNESS CHANGED since {0}...; the controller source was edited. Use an "
+                         "isolated checkout (a separate worktree) for a live run, and do not edit "
+                         "the harness while a run is in flight.".format(expect[:12]))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2041,6 +2069,12 @@ def main(argv=None):
     p.add_argument("--question-id", default=None, help="attach the observation to a persistent question")
     p.add_argument("--by", default="operator")
     p.set_defaults(fn=_cmd_observe)
+
+    p = sub.add_parser("fingerprint",
+                       help="print a hash of the controller source (issue #9: detect a harness edited "
+                            "under a live run). --expect HASH exits non-zero if it changed.")
+    p.add_argument("--expect", default=None, help="exit non-zero if the current hash differs from this")
+    p.set_defaults(fn=_cmd_fingerprint)
 
     a = ap.parse_args(argv)
     return a.fn(a)

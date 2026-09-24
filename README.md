@@ -66,6 +66,10 @@ Intake question E3 controls how often work pauses for review (one piece, one bat
 
 The planner is handed only the intake done-when criteria (from S2, plus the pass/fail examples). A criterion added to a goal another way that no assignment covers is reported as an `UNPLANNED_CRITERION` rather than dropped; a large backlog is not compiled into one plan, so run separable pieces as their own goals.
 
+If you already have a plan, pass `--plan-file <plan.json>` to `autonomous` (a JSON object with an `outcomes` list of contracts). The proposal then comes from your file instead of the model, and it still goes through the gate, your plan approval, and the interface-map step.
+
+Run each concurrent session in its own checkout (a separate git worktree), and do not edit the harness while a run is in flight. `python run/conductor.py fingerprint` prints a hash of the controller source; capture it before a run and pass it back with `--expect` to detect a harness edited underneath the run.
+
 ### 5. Propose and approve the interface map
 
 Now run `python run/conductor.py autonomous <package-folder> --decisions N --seconds N --workers my-worker`. This first invocation records a cumulative budget, derives a map from the approved plan, and stops at `AWAITING_MAP_APPROVAL` without dispatching. Read the owned paths, public calls, dependency edges, and executable launch command. If correct, **the person** runs `python run/conductor.py approve-map <goal-id> --from-proposed --as <person>`.

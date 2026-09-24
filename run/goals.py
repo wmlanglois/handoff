@@ -441,15 +441,25 @@ def set_unapproved_text(goal_id, goal_text, *, root=None):
 
 
 @_serialised
-def clear_rejected_plan(goal_id, *, root=None):
-    """Drop a rejected plan so the same goal can be planned again. Does not create a second goal."""
+def clear_rejected_plan(goal_id, *, reason="", by="", root=None):
+    """Drop a rejected plan so the same goal can be planned again. Does not create a second goal.
+
+    When a person rejects the plan, `reason`/`by` are kept in a durable `plan_rejection_log` that
+    survives the clear (the transient `plan_rejections` from the gate are dropped), so the record
+    shows why a human sent the goal back to the planner."""
     doc = _load(goal_id, root)
     if doc.get("approved"):
         raise GoalError("an approved plan is not cleared from here")
+    if (doc.get("assignments") or {}):
+        raise GoalError("workers have already been dispatched; reject is a pre-dispatch action")
+    cleared = [c.get("name") for c in (doc.get("proposed") or [])]
+    if reason or by:
+        doc.setdefault("plan_rejection_log", []).append({
+            "reason": reason or "", "by": by or "", "at": _now(), "cleared": cleared})
     doc["proposed"] = []
     doc["plan_rejections"] = []
     doc["parked"] = [q for q in (doc.get("parked") or []) if q.get("outcome") != "plan-rejected"]
-    _event(doc, "plan_cleared")
+    _event(doc, "plan_cleared", reason=(reason or "")[:200], by=by or "")
     _save(doc, root)
     return doc["goal_id"]
 

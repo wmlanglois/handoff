@@ -77,7 +77,11 @@ FIRST, and before any extraction, write THE SCOPED PROJECT -- about a page, in y
 THEN, and only then, derive the supporting machinery FROM that picture:
   1. Checkable criteria from the done_when lines.
   2. A first frozen oracle from verifier.pass_example and verifier.fail_example.
-  3. The autonomy level from env.leash and domain_branch (branch B never runs past leash B on a first pass).
+  3. The autonomy level from env.leash: HONOR the user's selected E3 cadence within the approved
+     budget. The required scope/plan/map approvals and stops for consequential actions still apply,
+     but do NOT add extra mandatory review stops. domain_branch (Q0) is input to VERIFICATION and
+     EXPLANATION strategy -- a branch-B user who cannot read code needs stronger outcome evidence
+     and clearer explanation -- and is NOT an autonomy cap: it never downgrades the chosen leash.
   4. env.rules 'never' items as hard gates, enforced rather than requested.
   5. The first batch of job cards, traceable to a phase in (d). Do not start work.
 

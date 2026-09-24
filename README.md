@@ -56,7 +56,9 @@ After intake is complete, run `python run/conductor.py start <project-folder> --
 
 ### 4. Propose and approve the plan
 
-Run `start` with the same folder, name, and package again. It asks the planner (Claude CLI or `FLEET_PLANNER`) for assignments and stops before dispatch. Read the proposed files, dependencies, checks, and budget; then **the person** runs the printed `python run/conductor.py approve <goal-id> --as <person>` command. If planning is rejected, `start` retries on the same goal ID rather than inventing a replacement.
+Run `start` with the same folder, name, and package again. It asks the planner (Claude CLI or `FLEET_PLANNER`) for assignments and stops before dispatch. Read the proposed files, dependencies, checks, and budget; then **the person** runs the printed `python run/conductor.py approve <goal-id> --as <person>` command. If the proposal is wrong, use `python run/conductor.py reject-plan <goal-id> --reason "what is wrong" --as <person>` and rerun `start` on the same goal. Machine-rejected plans also re-plan on that goal; neither kind of rejection approves or dispatches work.
+
+Intake question E3 controls how often work pauses for review (one piece, one batch, until done or stuck, or overnight), within the approved budget. Q0 asks whether you can inspect code; it does not silently shorten your chosen run cadence. Required scope, plan, and map approvals still apply.
 
 ### 5. Propose and approve the interface map
 

@@ -241,8 +241,14 @@ DUPLICATE_THRESHOLD = 0.6
 
 
 def review(contract, *, others=(), criteria=(), root=None, project_root=None,
-           integration_check=None):
-    """Grade ONE assignment before it is dispatched. Returns a falsy Review when it must not run."""
+           integration_check=None, known_producers=(), enforce_closure=True):
+    """Grade ONE assignment before it is dispatched. Returns a falsy Review when it must not run.
+
+    `known_producers` names assignments already accepted for this goal, so a `needs` edge onto
+    one of them is satisfied even though it is not a
+    sibling in THIS set of contracts. `enforce_closure` gates the orphaned-dependency check: it is
+    a WHOLE-PLAN property, so an INCREMENTAL caller that reviews partial rounds (plan_with_recovery)
+    passes False and runs the closure check once on the assembled plan instead."""
     c = as_contract(contract)
     root = Path(root or ROOT)
     problems = []
@@ -355,7 +361,11 @@ def review(contract, *, others=(), criteria=(), root=None, project_root=None,
     for o in others or ():
         od = as_contract(o)
         if od.get("name") == c.get("name"):
-            continue
+            problems.append(("DUPLICATE_NAME", "two planned outcomes use the same assignment name"))
+            break
+        if dest and (od.get("dest") or "").replace("\\", "/") == dest.replace("\\", "/"):
+            problems.append(("DUPLICATE_DEST", "two planned outcomes own the same destination"))
+            break
         if (c.get("approach") and od.get("approach") and c["approach"] != od["approach"]
                 and od.get("criterion_id") == c.get("criterion_id")):
             # Declared competing approaches to ONE criterion (LF-04). They share acceptance on
@@ -371,6 +381,32 @@ def review(contract, *, others=(), criteria=(), root=None, project_root=None,
         if od.get("done_when") and list(od["done_when"]) == list(c.get("done_when") or ()):
             problems.append(("DUPLICATE", f"identical done_when to {od.get('name')!r}"))
             break
+
+    # -- orphaned dependency (issue #4) -----------------------------------------------------------
+    # next_work resolves `needs` against accepted ASSIGNMENT NAMES, not filenames or stems.
+    # A filename alias or self-dependency would pass a loose check but never dispatch.
+    if enforce_closure and c.get("needs"):
+        producers = set(known_producers or ())
+        graph = {c.get("name"): c.get("needs") or []}
+        for o in others or ():
+            od = as_contract(o)
+            producers.add(od.get("name"))
+            graph[od.get("name")] = od.get("needs") or []
+        producers.discard("")
+        for dep in c.get("needs") or ():
+            if dep and dep not in producers:
+                problems.append(("ORPHAN_DEP",
+                                 "needs {0!r}, but no other planned or accepted assignment has "
+                                 "that name; the scheduler cannot release it".format(dep)))
+        # A closed cycle has producers for every edge but no first ready assignment.
+        def reaches_self(node, seen):
+            if node == c.get("name"):
+                return True
+            if node in seen or node not in graph:
+                return False
+            return any(reaches_self(n, seen | {node}) for n in graph[node])
+        if any(reaches_self(dep, set()) for dep in c.get("needs") or ()):
+            problems.append(("CYCLE_DEP", "dependency cycle leaves no first schedulable assignment"))
 
     # -- consumer calls the real interface (2026-09-23) --------------------------------------------
     # A consumer that says it calls `engine.simulate_journey` when the engine outcome only PROVIDES
@@ -410,7 +446,8 @@ def review(contract, *, others=(), criteria=(), root=None, project_root=None,
     return Review(name=c.get("name", "?"), ok=not problems, problems=problems)
 
 
-def gate(contracts, *, criteria=(), root=None, project_root=None, integration_check=None):
+def gate(contracts, *, criteria=(), root=None, project_root=None, integration_check=None,
+         known_producers=(), enforce_closure=True):
     """Run the check over a whole plan. Returns (accepted_contracts, [(contract, Review), ...]).
 
     Rejections are returned, not raised: a plan with one bad assignment should dispatch the other
@@ -421,10 +458,51 @@ def gate(contracts, *, criteria=(), root=None, project_root=None, integration_ch
     cs = [as_contract(c) for c in contracts]
     ok, bad = [], []
     for c in cs:
-        r = review(c, others=cs, criteria=criteria, root=root, project_root=project_root,
-                   integration_check=integration_check)
+        r = review(c, others=[o for o in cs if o is not c], criteria=criteria, root=root, project_root=project_root,
+                   integration_check=integration_check, known_producers=known_producers,
+                   enforce_closure=enforce_closure)
         (ok if r.ok else bad).append(c if r.ok else (c, r))
     return ok, bad
+
+
+_LAUNCH_CMD = re.compile(r"python[0-9.]*\s+([^\s`'\"]+\.py)", re.IGNORECASE)
+
+
+def required_launchers(scope_text):
+    """Launcher entry files the approved scope says the project is launched with, e.g. a scope that
+    reads `python game.py` requires a producer of `game.py` (issue #4). Returns relative paths.
+    `python -c ...` and module invocations name no file and impose no launcher requirement."""
+    out = set()
+    for m in _LAUNCH_CMD.finditer(scope_text or ""):
+        target = m.group(1).replace("\\", "/")
+        if target and not Path(target).is_absolute() and not target.startswith("../"):
+            out.add(target.removeprefix("./"))
+    return out
+
+
+def missing_launcher(scope_text, accepted, *, project_root=None):
+    """A required launcher with no producer among the accepted outcomes and not present in the
+    baseline project tree. Returns the sorted list of unproduced launcher paths (empty when the
+    plan is launchable)."""
+    targets = required_launchers(scope_text)
+    if not targets:
+        return []
+    produced = set()
+    for c in accepted or ():
+        cc = as_contract(c)
+        for key in ("dest", "artifact"):
+            v = (cc.get(key) or "").replace("\\", "/")
+            if v:
+                produced.add(v.removeprefix("./"))
+    proot = Path(project_root) if project_root else None
+    out = []
+    for t in sorted(targets):
+        if t in produced:
+            continue
+        if proot and (proot / t).is_file():
+            continue
+        out.append(t)
+    return out
 
 
 # =================================================================================================
@@ -445,6 +523,19 @@ document end to end, and that a person could USE when it lands.
 Every outcome you emit is checked before dispatch and REJECTED if it duplicates another owner,
 produces a report nobody consumes, lacks the material or tools to succeed, leaves the real
 implementation with you, or cannot say which goal criterion it advances.
+
+The plan must be DEPENDENCY-CLOSED and LAUNCHABLE:
+  - Every name in an outcome's `needs` must be the assignment NAME of another outcome in THIS
+    plan (or an already accepted assignment). A baseline filename is a source, not a `needs` name.
+    Never reference a `needs` that no assignment produces.
+  - If the goal is launched with a command like `python game.py`, one outcome must PRODUCE that entry
+    file (its `dest` is that path). Do not assume a launcher that no outcome builds. When the project
+    starts empty, the outcome that satisfies the "runs via `python <file>`" criterion is the one whose
+    `dest` is `<file>`.
+  - One `dest` file has exactly ONE owning outcome. If that file satisfies several criteria, give it a
+    single outcome that lists all their checks in `done_when` and binds the primary `criterion_id`; do
+    NOT emit two outcomes with the same `dest`. Two rows for one file are one deliverable, not two, and
+    two owners of the same file collide at integration.
 
 Reply with JSON ONLY:
 {"outcomes":[{

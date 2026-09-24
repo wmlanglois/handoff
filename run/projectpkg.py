@@ -312,15 +312,16 @@ def cadence_letter(text: str) -> str:
     return head if head in "ABCD" else ""
 
 
-def effective_cadence(letter: str, branch: str) -> str:
-    """E3 chooses when the user sees a draft. Branch B does not run past a batch on a first pass.
+def effective_cadence(letter: str, branch: str = "") -> str:
+    """E3 alone chooses when the user sees a draft, honored within the approved budget.
 
-    The letter is not a worker count."""
+    The letter is not a worker count. `branch` (Q0 domain) is NOT an autonomy cap: a non-coder
+    (branch B) needs stronger outcome evidence and explanation, not more forced code-review stops,
+    so it does not downgrade the selected cadence (issue #2). The required scope/plan/map approvals
+    and consequential-action stops apply regardless of this letter."""
     letter = (letter or "").strip().upper()[:1]
     if letter not in "ABCD":
         return ""
-    if (branch or "").strip().upper() == "B" and letter in ("C", "D"):
-        return "B"
     return letter
 
 

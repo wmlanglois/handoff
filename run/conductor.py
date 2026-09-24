@@ -200,14 +200,14 @@ def _plan_feedback(findings, uncovered):
 
 
 def plan_with_recovery(goal_id, goal_text, criteria, *, rounds=2, planner=None, echo=print, root=None,
-                       extra_review=None):
+                       extra_review=None, initial_feedback=""):
     """O3: plan, gate, and give the planner a BOUNDED chance to correct rejected work against the
     unchanged purpose. Valid outcomes from any round are kept (one owner per criterion); criteria
     still uncovered after the bound are parked with their exact finding (honest stop). Returns
     (accepted, findings, uncovered)."""
     planner = planner or frontier_plan
     cids = [c["id"] if isinstance(c, dict) else c for c in criteria]
-    accepted, findings, covered, feedback = [], [], set(), ""
+    accepted, findings, covered, feedback = [], [], set(), initial_feedback
     for r in range(rounds + 1):
         uncovered = [c for c in criteria if (c["id"] if isinstance(c, dict) else c) not in covered]
         if not uncovered:
@@ -218,7 +218,7 @@ def plan_with_recovery(goal_id, goal_text, criteria, *, rounds=2, planner=None, 
             findings.append({"round": r, "error": repr(e)})
             break
         st_plan = goals.state(goal_id, root=root)
-        ok, bad = planning.gate(contracts, criteria=[{"id": i} for i in cids] if not isinstance(criteria[0], dict) else criteria, root=ROOT, project_root=st_plan.get("project_root"), integration_check=(st_plan.get("integration") or {}).get("check_source") or None)
+        ok, bad = planning.gate(contracts, criteria=[{"id": i} for i in cids] if not isinstance(criteria[0], dict) else criteria, root=ROOT, project_root=st_plan.get("project_root"), integration_check=(st_plan.get("integration") or {}).get("check_source") or None, enforce_closure=False)
         if extra_review:
             kept = []
             for con in ok:
@@ -267,7 +267,8 @@ def plan_with_recovery(goal_id, goal_text, criteria, *, rounds=2, planner=None, 
             for con in list(accepted):
                 rv = planning.review(con, others=[o for o in accepted if o is not con],
                                      criteria=crit_objs, root=ROOT,
-                                     project_root=st_plan.get("project_root"))
+                                     project_root=st_plan.get("project_root"),
+                                     enforce_closure=False)
                 probs = list(rv.problems)
                 if extra_review:
                     probs += list(extra_review(con) or [])
@@ -282,15 +283,51 @@ def plan_with_recovery(goal_id, goal_text, criteria, *, rounds=2, planner=None, 
                     kicked = True
                     break
         uncovered = [c for c in criteria if (c["id"] if isinstance(c, dict) else c) not in covered]
+        # Once every criterion appears covered, validate the assembled dependency graph BEFORE
+        # ending the bounded planner loop. Otherwise a complete-looking but orphaned plan uses up
+        # no repair round and the user has to restart planning merely to hear the same defect.
+        if not uncovered:
+            _drop_invalid_dependencies(accepted, covered, findings, crit_objs, st_plan,
+                                       round_id=r, echo=echo)
+            uncovered = [c for c in criteria if (c["id"] if isinstance(c, dict) else c) not in covered]
         if not uncovered:
             break
         feedback = _plan_feedback(findings, uncovered)
         if r < rounds:
             echo("  RE-PLANNING ({0} criteria uncovered)".format(len(uncovered)))
+    # A partial final plan also needs closure before it is recorded, even if other criteria never
+    # received admissible work at all.
+    crit_objs_final = criteria if criteria and isinstance(criteria[0], dict) else [{"id": i} for i in cids]
+    _drop_invalid_dependencies(accepted, covered, findings, crit_objs_final,
+                               goals.state(goal_id, root=root), round_id="closure", echo=echo)
     goals.propose(goal_id, accepted, root=root)
     uncovered = [c for c in criteria if (c["id"] if isinstance(c, dict) else c) not in covered]
     goals.record_plan_rejections(goal_id, findings, uncovered, root=root)
     return accepted, findings, uncovered
+
+
+def _drop_invalid_dependencies(accepted, covered, findings, criteria, goal_state, *, round_id, echo):
+    """Remove graph edges the scheduler cannot satisfy, then recheck consumers of removed nodes."""
+    dropped = True
+    while dropped:
+        dropped = False
+        for con in list(accepted):
+            rv = planning.review(con, others=[o for o in accepted if o is not con],
+                                 criteria=criteria, root=ROOT,
+                                 project_root=goal_state.get("project_root"), enforce_closure=True)
+            graph_errors = [(code, msg) for code, msg in rv.problems
+                            if code in ("ORPHAN_DEP", "CYCLE_DEP")]
+            if graph_errors:
+                accepted.remove(con)
+                if not any(o.get("criterion_id") == con.get("criterion_id") for o in accepted):
+                    covered.discard(con.get("criterion_id"))
+                findings.append({"round": round_id, "name": con.get("name"),
+                                 "criterion_id": con.get("criterion_id"),
+                                 "problems": graph_errors, "phase": "closure"})
+                echo("  ORPHANED {0}: {1}".format(con.get("name"),
+                     "; ".join("{0}: {1}".format(k, v) for k, v in graph_errors)[:160]))
+                dropped = True
+                break
 
 
 def propose_plan(goal_id, contracts, *, root=None, echo=print):
@@ -432,8 +469,32 @@ def _cmd_plan(a):
 
 
 def _cmd_approve(a):
+    if not (goals.state(a.goal_id).get("proposed") or []):
+        raise SystemExit("no proposed plan to approve; run start to plan this goal")
     goals.approve(a.goal_id, a.approver)
     print(goals.summary(a.goal_id))
+
+
+def _cmd_reject_plan(a):
+    """A person rejects the proposed plan on the same goal (issue #4). Keeps the goal and its approved
+    scope, records the rejection reason, clears ONLY the proposal, and leaves the goal ready for the
+    ordinary planner on the next `start`. Refuses once approved or once any worker has been dispatched,
+    so no approval or dispatch can happen against a rejected plan."""
+    if not (a.reason or "").strip():
+        raise SystemExit("reject-plan needs --reason; a silent rejection is not actionable")
+    st = goals.state(a.goal_id)
+    if st.get("approved"):
+        raise SystemExit("goal {0} is already approved; a rejection cannot follow approval".format(a.goal_id))
+    if st.get("assignments"):
+        raise SystemExit("goal {0} already dispatched workers; reject is a pre-dispatch action".format(a.goal_id))
+    if not (st.get("proposed") or []):
+        raise SystemExit("goal {0} has no proposed plan to reject".format(a.goal_id))
+    goals.clear_rejected_plan(a.goal_id, reason=a.reason, by=(a.approver or ""))
+    print("rejected the proposed plan for {0}; scope and criteria are kept.".format(a.goal_id))
+    print("reason recorded: {0}".format(a.reason))
+    print("re-plan the SAME goal by running start again on this package:")
+    print("  python run/conductor.py start <project-folder> --name <name> --package <package-folder>")
+    print("no approval or dispatch occurs while the plan is rejected.")
 
 
 def _cmd_advance(a):
@@ -710,6 +771,7 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True):
     """Plan the approved page against the user's criteria, then stage integration. Same goal id."""
     import projectpkg
     import intake
+    import proofloop
     st = projectpkg.intake_state(package, name)
     criteria = projectpkg.criteria_from_intake(st)
     limits = projectpkg.limits_from_intake(st)
@@ -726,9 +788,31 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True):
     def extra(con):
         return projectpkg.review_first_use(con, criteria, limits)
 
+    prior_rejections = goals.state(gid).get("plan_rejection_log") or []
+    initial_feedback = (prior_rejections[-1].get("reason") or "") if prior_rejections else ""
     accepted, _findings, uncovered = plan_with_recovery(
-        gid, page, criteria, planner=_planner_for(root), extra_review=extra)
-    if uncovered or not accepted:
+        gid, page, criteria, planner=_planner_for(root), extra_review=extra,
+        initial_feedback=initial_feedback)
+    # Issue #4: an empty-project plan whose approved launch command is `python game.py` must have a
+    # producer of that entry file (or a baseline one). A plan that builds only libraries the launch
+    # command cannot invoke is not launchable, so it must not be presented as approvable.
+    try:
+        launch_picture = proofloop.milestone_text(page)
+    except proofloop.ProofError:
+        launch_picture = page
+    unlaunchable = planning.missing_launcher(launch_picture, accepted, project_root=root) if accepted else []
+    if uncovered or not accepted or unlaunchable:
+        # Do NOT leave an inadmissible plan (uncovered criterion, orphaned dependency, or no launch
+        # producer) sitting in `proposed` where a person could approve it. Record the launcher gap as
+        # actionable feedback, then clear the approvable proposal so the same goal re-plans cleanly.
+        if unlaunchable:
+            goals.record_plan_rejections(gid, [{
+                "round": "closure", "name": None, "criterion_id": None,
+                "problems": [["MISSING_LAUNCHER",
+                              "the approved launch command runs {0} but no assignment produces it and "
+                              "it is not in the baseline; add a producer of the launch entry point".format(
+                                  ", ".join(unlaunchable))]]}], [])
+        goals.propose(gid, [])
         return False
     # In autonomous proof-loop mode the MILESTONE JOURNEY is the project integration (a fresh-process
     # launch of the assembled candidate); a separate packet-integration group would be a second,
@@ -782,6 +866,8 @@ def _print_approve(gid):
     print("goal {0}".format(gid))
     print("\nnothing runs until a human approves:\n"
           "  python run/conductor.py approve {0} --as <you>\n"
+          "or, to send the plan back to the planner (keeps the goal and scope):\n"
+          "  python run/conductor.py reject-plan {0} --reason \"...\" --as <you>\n"
           "stopped before assignment approval; no worker was started".format(gid))
 
 
@@ -858,7 +944,14 @@ def _resume(package):
             return 0
         else:
             print("replanning goal {0}; the previous plan was not accepted".format(gid))
-            goals.clear_rejected_plan(gid)
+            prior = st_goal.get("plan_rejections") or []
+            if prior:
+                problem = next((f.get("problems") for f in reversed(prior) if f.get("problems")), [])
+                feedback = "; ".join("{0}: {1}".format(code, msg) for code, msg in problem)
+                goals.clear_rejected_plan(gid, reason=feedback[:800], by="plan-gate")
+            # An explicit reject-plan already cleared the proposal and recorded the person's
+            # reason. Clearing again here would append an empty automated rejection and erase
+            # the only feedback the next planner invocation needs to hear.
     else:
         criteria = projectpkg.criteria_from_intake(projectpkg.intake_state(package, name))
         gid = goals.create(page, criteria, project_root=root)
@@ -1631,6 +1724,14 @@ def main(argv=None):
     p.add_argument("goal_id")
     p.add_argument("--as", dest="approver", required=True)
     p.set_defaults(fn=_cmd_approve)
+
+    p = sub.add_parser("reject-plan",
+                       help="a human rejects the proposed plan; keeps the goal+scope, clears the "
+                            "proposal, and re-enters the planner on the next start")
+    p.add_argument("goal_id")
+    p.add_argument("--reason", required=True, help="why the plan is being sent back")
+    p.add_argument("--as", dest="approver", required=True)
+    p.set_defaults(fn=_cmd_reject_plan)
 
     p = sub.add_parser("advance", help="keep choosing useful work until blocked or out of budget")
     p.add_argument("goal_id")

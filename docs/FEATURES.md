@@ -14,7 +14,7 @@ These ends are deliberate:
 
 - Scope approval and assignment approval. `start` stops before either is skipped.
 - A never-rule from intake S4 or E4. The assignment is parked. It is not dispatched.
-- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. On a branch-B project, `C` and `D` are treated as `B` for that first run. The letter is not a worker count.
+- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. `C` runs until done or stuck; `D` runs overnight. The selected letter is honored within the approved budget regardless of Q0 (domain). Q0 does not cap autonomy. The letter is not a worker count.
 - `--stagnation-k` on `verified.py`: consecutive rounds with no achievement and no new evidence.
 - `--investigation-budget` on `verified.py`: evidence keeps arriving and achievement never does.
 - An architect action, one of nine: `REPAIR`, `FOLLOWON`, `PARK`, `STOP`, `INVESTIGATE`, `REVISIT`, `PROPOSAL`, `QUESTION`, `CHALLENGE`.
@@ -58,7 +58,7 @@ Related calls:
 
 Intake question ids, fixed, no model: `Q0`, `S1`, `S2`, `S3`, `S4`, `S5`, `S6a`, `S6b`, `V1`, `V2`, `V3`, `E1`, `E2`, `E3`, `E4`. `Q0` `A` asks `S6a` and not `S6b`. `Q0` `B` asks `S6b` and not `S6a`. `V1` that is only `E` skips `V2` and `V3`.
 
-E3 letters: `A` every finished piece, `B` one batch, `C` until done or stuck, `D` overnight. Branch B does not run past `B` on the first pass.
+E3 letters: `A` every finished piece, `B` one batch, `C` until done or stuck, `D` overnight. The chosen letter is honored within budget; Q0 (ability to inspect code) does not downgrade it.
 
 ## Conductor
 
@@ -72,9 +72,15 @@ Prints goal ids.
 
 Opens a goal and proposes a plan. `--criterion` is repeatable; each value is one acceptance sentence. `--budget` is an integer cap on assignments; `0` means no cap. `--plan-file` is a JSON object with an `outcomes` list (or `jobs`) of contracts, used instead of a model. `--project-root` is the directory where declared relative sources resolve. `--integration` is a JSON file of groups, destinations, and a frozen check. `--integration-check` is that check's Python source.
 
+Before approval, the proposed plan must be dependency-closed and launchable. Every `needs` edge names a different planned or already accepted assignment, not a filename; orphaned and cyclic edges are refused. If the approved launch milestone says `python <file>` and the baseline lacks that file, an outcome must produce that exact path. One destination has one owning outcome; checks for multiple criteria on the same file belong in one outcome's `done_when`.
+
 `python run/conductor.py approve <goal_id> --as <name>`
 
 Approves the goal and the proposed plan. Nothing dispatches before this.
+
+`python run/conductor.py reject-plan <goal_id> --reason TEXT --as <name>`
+
+Sends an unapproved proposed plan back to the planner on the same goal. Records the reason, keeps the approved scope, and clears only the proposal. The next `start` re-plans. It refuses after approval or dispatch.
 
 ### Autonomous project mode
 

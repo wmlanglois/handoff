@@ -395,11 +395,17 @@ def advance(goal_id, executor, *, capacity=1, max_assignments=None, root=None, e
             cards = [cd for cd, k, w in chosen]
         if not cards:
             break
-        limits = (goals.state(goal_id, root).get("limits") or {})
+        st_now = goals.state(goal_id, root)
+        limits = (st_now.get("limits") or {})
+        assignments = st_now.get("assignments") or {}
         allowed = []
         for card in cards:
-            hit = projectpkg.limit_hits(card, limits)
             display = card.get("assignment") or card["name"]
+            # Scan the stored contract, not the rendered card (mirrors orchestrate.py). card_for
+            # pastes the whole scope into the brief, and a scope that says "Never delete files"
+            # would match the never-rule against its own statement.
+            stored = (assignments.get(display) or {}).get("contract")
+            hit = projectpkg.limit_hits(stored or card, limits)
             if hit:
                 echo("  refused {0}: {1}".format(display, hit))
                 goals.record(goal_id, card["criterion_id"], "parked-undefined", "",
@@ -767,8 +773,46 @@ def _planner_for(project_root):
     return planner
 
 
-def _plan_package(package, name, gid, page, root, *, stage_integ=True):
-    """Plan the approved page against the user's criteria, then stage integration. Same goal id."""
+def unplanned_criteria(goal_criteria, intake_ids, planned_ids):
+    """Issue #6: goal criteria the planner never sees and no accepted outcome covers.
+
+    The planner is only handed the intake done-when criteria (criteria_from_intake). A criterion
+    added to the goal another way -- e.g. a caller seeding extra spine criteria via add_criterion --
+    is neither planned nor reported: it just sits uncovered. This returns those ids so the harness can
+    surface them with guidance instead of dropping them silently. The milestone (covered by the
+    journey, not a packet) and human_only criteria (examples, sign-offs) are excluded by design.
+    """
+    intake_ids = set(intake_ids or ())
+    planned_ids = set(planned_ids or ())
+    out = []
+    for c in goal_criteria or ():
+        cid = c.get("id")
+        if not cid or c.get("human_only") or cid == "milestone":
+            continue
+        if cid in intake_ids or cid in planned_ids:
+            continue
+        out.append(cid)
+    return out
+
+
+def _planner_from_file(plan_file):
+    """Issue #5: a planner that returns a PRE-WRITTEN plan instead of calling a model, so an existing
+    plan can enter the ordinary flow. The contracts still go through the gate, review_first_use, human
+    plan approval and map derivation -- only the source of the proposal changes. Re-planning rounds
+    return the same contracts (a supplied plan does not self-revise), so a rejected plan stays rejected
+    and is reported, never silently model-replaced."""
+    contracts = planning.parse_plan(Path(plan_file).read_text(encoding="utf-8"))
+
+    def planner(goal_text, criteria, feedback=""):
+        return [dict(c) for c in contracts]
+    return planner
+
+
+def _plan_package(package, name, gid, page, root, *, stage_integ=True, plan_file=None):
+    """Plan the approved page against the user's criteria, then stage integration. Same goal id.
+
+    With `plan_file` the proposal comes from that file (issue #5) instead of the model planner; it is
+    still gated, approved and mapped through the ordinary path."""
     import projectpkg
     import intake
     import proofloop
@@ -790,8 +834,9 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True):
 
     prior_rejections = goals.state(gid).get("plan_rejection_log") or []
     initial_feedback = (prior_rejections[-1].get("reason") or "") if prior_rejections else ""
+    planner = _planner_from_file(plan_file) if plan_file else _planner_for(root)
     accepted, _findings, uncovered = plan_with_recovery(
-        gid, page, criteria, planner=_planner_for(root), extra_review=extra,
+        gid, page, criteria, planner=planner, extra_review=extra,
         initial_feedback=initial_feedback)
     # Issue #4: an empty-project plan whose approved launch command is `python game.py` must have a
     # producer of that entry file (or a baseline one). A plan that builds only libraries the launch
@@ -814,6 +859,21 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True):
                                   ", ".join(unlaunchable))]]}], [])
         goals.propose(gid, [])
         return False
+    # Issue #6: surface any goal criterion the planner never saw (added via add_criterion, not
+    # intake-derived) that no accepted outcome covers -- record it with guidance instead of dropping
+    # it silently. Normally empty: the autonomous flow only adds intake criteria (planned), the
+    # milestone (excluded) and human_only examples (excluded).
+    orphaned = unplanned_criteria(goals.state(gid).get("criteria") or [],
+                                  {c["id"] for c in criteria},
+                                  {c.get("criterion_id") for c in accepted})
+    if orphaned:
+        goals.record_plan_rejections(gid, [{
+            "round": "closure", "name": None, "criterion_id": cid,
+            "problems": [["UNPLANNED_CRITERION",
+                          "criterion {0!r} was added to the goal but the planner only plans the "
+                          "intake done-when criteria, so it was not worked; supply it via "
+                          "`plan --plan-file` or run it as a separate goal".format(cid)]]}
+            for cid in orphaned], [])
     # In autonomous proof-loop mode the MILESTONE JOURNEY is the project integration (a fresh-process
     # launch of the assembled candidate); a separate packet-integration group would be a second,
     # redundant DONE gate. `stage_integ=False` leaves the journey as the sole integration.
@@ -1125,6 +1185,7 @@ def _cmd_autonomous(a):
     """Operator entry. Prints the recorded budgets, then runs the loop under those budgets."""
     import orchestrate
     gid = autonomous_launch(Path(a.package).resolve(), decisions=a.decisions, seconds=a.seconds)
+    delegate = (getattr(a, "delegate", "") or "").strip() or None
     if a.map:
         if not (a.approver or "").strip():
             raise SystemExit("a map approval needs --as <you>")
@@ -1143,27 +1204,45 @@ def _cmd_autonomous(a):
     if not have_map and not budget_gone:
         # PLAN stop: no plan proposed or approved yet -> run the ordinary planner and stop.
         if not doc.get("approved") and not doc.get("proposed"):
-            stop = _autonomous_plan(gid, Path(a.package).resolve())
+            stop = _autonomous_plan(gid, Path(a.package).resolve(),
+                                    plan_file=getattr(a, "plan_file", None))
             if stop is not None:
                 return stop
             doc = goals.state(gid)
-        # a plan is proposed but not approved -> stop for the person to approve it.
+        # a plan is proposed but not approved -> a person approves it, UNLESS the operator gave a
+        # standing --delegate for this unattended (overnight) run. Issue #7: without --delegate an
+        # overnight run still stops here, so "overnight" never actually ran unattended. --delegate is
+        # the human's explicit up-front approval; the budget, never-rules and consequential sign-offs
+        # stay hard bounds regardless.
         if doc.get("proposed") and not doc.get("approved"):
-            print("plan PROPOSED ({0} assignments), NOT approved.".format(len(doc["proposed"])))
-            print("  approve:  python run/conductor.py approve {0} --as <you>".format(gid))
-            print("then re-run the same autonomous command to derive and approve the interface map.")
-            return {"stop": "AWAITING_PLAN_APPROVAL", "goal_id": gid, "proposed": doc["proposed"]}
-        # MAP stop: plan approved, no map -> derive and PROPOSE a map, then stop.
+            if delegate:
+                goals.approve(gid, delegate)
+                print("plan AUTO-APPROVED by standing delegate {0} ({1} assignments).".format(
+                    delegate, len(doc["proposed"])))
+                doc = goals.state(gid)
+            else:
+                print("plan PROPOSED ({0} assignments), NOT approved.".format(len(doc["proposed"])))
+                print("  approve:  python run/conductor.py approve {0} --as <you>".format(gid))
+                print("  or run unattended:  add --delegate <you> to pre-approve the plan and map")
+                print("then re-run the same autonomous command to derive and approve the interface map.")
+                return {"stop": "AWAITING_PLAN_APPROVAL", "goal_id": gid, "proposed": doc["proposed"]}
+        # MAP stop: plan approved, no map -> derive and PROPOSE a map; a person approves it, unless a
+        # standing --delegate pre-authorizes this run.
         if (doc.get("approved") and doc.get("assignments")
                 and not (doc.get("proposed_map") or {}).get("spec")):
             spec = derive_map_spec(gid)
             if spec:
                 goals.propose_interface_map(gid, spec)
-                print("interface map PROPOSED from the approved plan (NOT approved).")
-                print("  review/approve:  python run/conductor.py approve-map {0} --from-proposed --as <you>".format(gid))
-                print("  or edit + approve a file:  python run/conductor.py approve-map {0} <map.json> --as <you>".format(gid))
-                print("then re-run the same autonomous command to launch under the recorded budget.")
-                return {"stop": "AWAITING_MAP_APPROVAL", "goal_id": gid, "proposed_map": spec}
+                if delegate:
+                    goals.approve_interface_map(gid, spec, delegate, fixture=False)
+                    print("interface map AUTO-APPROVED by standing delegate {0}.".format(delegate))
+                    doc = goals.state(gid)
+                else:
+                    print("interface map PROPOSED from the approved plan (NOT approved).")
+                    print("  review/approve:  python run/conductor.py approve-map {0} --from-proposed --as <you>".format(gid))
+                    print("  or edit + approve a file:  python run/conductor.py approve-map {0} <map.json> --as <you>".format(gid))
+                    print("then re-run the same autonomous command to launch under the recorded budget.")
+                    return {"stop": "AWAITING_MAP_APPROVAL", "goal_id": gid, "proposed_map": spec}
     workers = [w.strip() for w in (a.workers or DEFAULT_WORKER).split(",") if w.strip()]
     summary = orchestrate.run_goal(gid, workers, max_seconds=int(a.seconds),
                                    max_decisions=int(a.decisions))
@@ -1202,11 +1281,13 @@ def _cmd_status(a):
     print(f"\ncomplete(): {goals.complete(a.goal_id)}   state: {d['state']}")
 
 
-def _autonomous_plan(gid, package):
+def _autonomous_plan(gid, package, plan_file=None):
     """The PLAN stop of one-entry autonomy: run the ORDINARY planner (intake done-when criteria +
     plan_with_recovery) to PROPOSE a plan for human approval. Returns None when a plan was proposed
     (the caller then stops for approval), or a stop dict when planning cannot proceed -- e.g. the
-    intake done-when answers are not in yet, which is a human step, not a crash."""
+    intake done-when answers are not in yet, which is a human step, not a crash.
+
+    With `plan_file` the proposal comes from that pre-written plan (issue #5) instead of the model."""
     import projectpkg
     name = projectpkg.load_project(package).get("name") or "project"
     st = goals.state(gid)
@@ -1227,7 +1308,8 @@ def _autonomous_plan(gid, package):
     # tree is seeded from), not the fleet checkout.
     project_root = st.get("project_root") or projectpkg.load_project(package).get("project_root") or str(package)
     try:
-        _plan_package(package, name, gid, page, Path(project_root), stage_integ=False)
+        _plan_package(package, name, gid, page, Path(project_root), stage_integ=False,
+                      plan_file=plan_file)
     except SystemExit as e:
         print("cannot plan yet: {0}".format(e))
         return {"stop": "AWAITING_INTAKE", "goal_id": gid, "reason": str(e)}
@@ -1703,6 +1785,34 @@ def consumer_contract_problems(contract):
     return problems
 
 
+def harness_fingerprint(root=None):
+    """Issue #9: a stable hash of the controller source, so a live/evaluation run can tell whether
+    the harness was edited under it (a second session editing this same checkout mid-run). Hashes the
+    .py files under `root` (default: the run/ package this module lives in), sorted, excluding caches.
+    Two sessions should each use an isolated checkout; when they do not, this makes drift detectable
+    instead of silent."""
+    import hashlib
+    base = Path(root) if root else Path(__file__).resolve().parent
+    h = hashlib.sha256()
+    for p in sorted(base.rglob("*.py")):
+        if "__pycache__" in p.parts:
+            continue
+        h.update(p.relative_to(base).as_posix().encode("utf-8") + b"\0")
+        h.update(p.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def _cmd_fingerprint(a):
+    fp = harness_fingerprint()
+    print(fp)
+    expect = getattr(a, "expect", None)
+    if expect and expect != fp:
+        raise SystemExit("HARNESS CHANGED since {0}...; the controller source was edited. Use an "
+                         "isolated checkout (a separate worktree) for a live run, and do not edit "
+                         "the harness while a run is in flight.".format(expect[:12]))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1764,6 +1874,12 @@ def main(argv=None):
     p.add_argument("--seconds", type=int, required=True)
     p.add_argument("--workers", default=DEFAULT_WORKER)
     p.add_argument("--map", default=None, help="interface map JSON; requires --as")
+    p.add_argument("--plan-file", default=None, metavar="PATH",
+                   help="propose this pre-written plan (JSON with an 'outcomes' list) instead of "
+                        "calling the model planner; it is still gated, human-approved and mapped.")
+    p.add_argument("--delegate", default=None, metavar="NAME",
+                   help="run unattended (overnight): pre-approve the plan and derived map as NAME's "
+                        "standing approval. Budget, never-rules and consequential sign-offs still apply.")
     p.add_argument("--as", dest="approver", default="")
     p.set_defaults(fn=_cmd_autonomous)
 
@@ -1953,6 +2069,12 @@ def main(argv=None):
     p.add_argument("--question-id", default=None, help="attach the observation to a persistent question")
     p.add_argument("--by", default="operator")
     p.set_defaults(fn=_cmd_observe)
+
+    p = sub.add_parser("fingerprint",
+                       help="print a hash of the controller source (issue #9: detect a harness edited "
+                            "under a live run). --expect HASH exits non-zero if it changed.")
+    p.add_argument("--expect", default=None, help="exit non-zero if the current hash differs from this")
+    p.set_defaults(fn=_cmd_fingerprint)
 
     a = ap.parse_args(argv)
     return a.fn(a)

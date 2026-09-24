@@ -62,7 +62,13 @@ After intake is complete, run `python run/conductor.py start <project-folder> --
 
 Run `start` with the same folder, name, and package again. It asks the planner (Claude CLI or `FLEET_PLANNER`) for assignments and stops before dispatch. Read the proposed files, dependencies, checks, and budget; then **the person** runs the printed `python run/conductor.py approve <goal-id> --as <person>` command. If the proposal is wrong, use `python run/conductor.py reject-plan <goal-id> --reason "what is wrong" --as <person>` and rerun `start` on the same goal. Machine-rejected plans also re-plan on that goal; neither kind of rejection approves or dispatches work.
 
-Intake question E3 controls how often work pauses for review (one piece, one batch, until done or stuck, or overnight), within the approved budget. Q0 asks whether you can inspect code; it does not silently shorten your chosen run cadence. Required scope, plan, and map approvals still apply.
+Intake question E3 controls how often work pauses for review (one piece, one batch, until done or stuck, or overnight), within the approved budget. Q0 asks whether you can inspect code; it does not silently shorten your chosen run cadence. Required scope, plan, and map approvals still apply: an overnight run still stops at each approval gate on its own. To run truly unattended, pass `--delegate <you>` to `autonomous` — it pre-approves the proposed plan and the derived interface map as your standing approval for that run. The budget, the never-rules, and consequential sign-offs remain hard bounds; without `--delegate` the gates stop as usual.
+
+The planner is handed only the intake done-when criteria (from S2, plus the pass/fail examples). A criterion added to a goal another way that no assignment covers is reported as an `UNPLANNED_CRITERION` rather than dropped; a large backlog is not compiled into one plan, so run separable pieces as their own goals.
+
+If you already have a plan, pass `--plan-file <plan.json>` to `autonomous` (a JSON object with an `outcomes` list of contracts). The proposal then comes from your file instead of the model, and it still goes through the gate, your plan approval, and the interface-map step.
+
+Run each concurrent session in its own checkout (a separate git worktree), and do not edit the harness while a run is in flight. `python run/conductor.py fingerprint` prints a hash of the controller source; capture it before a run and pass it back with `--expect` to detect a harness edited underneath the run.
 
 ### 5. Propose and approve the interface map
 

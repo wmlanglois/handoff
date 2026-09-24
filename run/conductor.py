@@ -795,8 +795,24 @@ def unplanned_criteria(goal_criteria, intake_ids, planned_ids):
     return out
 
 
-def _plan_package(package, name, gid, page, root, *, stage_integ=True):
-    """Plan the approved page against the user's criteria, then stage integration. Same goal id."""
+def _planner_from_file(plan_file):
+    """Issue #5: a planner that returns a PRE-WRITTEN plan instead of calling a model, so an existing
+    plan can enter the ordinary flow. The contracts still go through the gate, review_first_use, human
+    plan approval and map derivation -- only the source of the proposal changes. Re-planning rounds
+    return the same contracts (a supplied plan does not self-revise), so a rejected plan stays rejected
+    and is reported, never silently model-replaced."""
+    contracts = planning.parse_plan(Path(plan_file).read_text(encoding="utf-8"))
+
+    def planner(goal_text, criteria, feedback=""):
+        return [dict(c) for c in contracts]
+    return planner
+
+
+def _plan_package(package, name, gid, page, root, *, stage_integ=True, plan_file=None):
+    """Plan the approved page against the user's criteria, then stage integration. Same goal id.
+
+    With `plan_file` the proposal comes from that file (issue #5) instead of the model planner; it is
+    still gated, approved and mapped through the ordinary path."""
     import projectpkg
     import intake
     import proofloop
@@ -818,8 +834,9 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True):
 
     prior_rejections = goals.state(gid).get("plan_rejection_log") or []
     initial_feedback = (prior_rejections[-1].get("reason") or "") if prior_rejections else ""
+    planner = _planner_from_file(plan_file) if plan_file else _planner_for(root)
     accepted, _findings, uncovered = plan_with_recovery(
-        gid, page, criteria, planner=_planner_for(root), extra_review=extra,
+        gid, page, criteria, planner=planner, extra_review=extra,
         initial_feedback=initial_feedback)
     # Issue #4: an empty-project plan whose approved launch command is `python game.py` must have a
     # producer of that entry file (or a baseline one). A plan that builds only libraries the launch
@@ -1187,7 +1204,8 @@ def _cmd_autonomous(a):
     if not have_map and not budget_gone:
         # PLAN stop: no plan proposed or approved yet -> run the ordinary planner and stop.
         if not doc.get("approved") and not doc.get("proposed"):
-            stop = _autonomous_plan(gid, Path(a.package).resolve())
+            stop = _autonomous_plan(gid, Path(a.package).resolve(),
+                                    plan_file=getattr(a, "plan_file", None))
             if stop is not None:
                 return stop
             doc = goals.state(gid)
@@ -1263,11 +1281,13 @@ def _cmd_status(a):
     print(f"\ncomplete(): {goals.complete(a.goal_id)}   state: {d['state']}")
 
 
-def _autonomous_plan(gid, package):
+def _autonomous_plan(gid, package, plan_file=None):
     """The PLAN stop of one-entry autonomy: run the ORDINARY planner (intake done-when criteria +
     plan_with_recovery) to PROPOSE a plan for human approval. Returns None when a plan was proposed
     (the caller then stops for approval), or a stop dict when planning cannot proceed -- e.g. the
-    intake done-when answers are not in yet, which is a human step, not a crash."""
+    intake done-when answers are not in yet, which is a human step, not a crash.
+
+    With `plan_file` the proposal comes from that pre-written plan (issue #5) instead of the model."""
     import projectpkg
     name = projectpkg.load_project(package).get("name") or "project"
     st = goals.state(gid)
@@ -1288,7 +1308,8 @@ def _autonomous_plan(gid, package):
     # tree is seeded from), not the fleet checkout.
     project_root = st.get("project_root") or projectpkg.load_project(package).get("project_root") or str(package)
     try:
-        _plan_package(package, name, gid, page, Path(project_root), stage_integ=False)
+        _plan_package(package, name, gid, page, Path(project_root), stage_integ=False,
+                      plan_file=plan_file)
     except SystemExit as e:
         print("cannot plan yet: {0}".format(e))
         return {"stop": "AWAITING_INTAKE", "goal_id": gid, "reason": str(e)}
@@ -1825,6 +1846,9 @@ def main(argv=None):
     p.add_argument("--seconds", type=int, required=True)
     p.add_argument("--workers", default=DEFAULT_WORKER)
     p.add_argument("--map", default=None, help="interface map JSON; requires --as")
+    p.add_argument("--plan-file", default=None, metavar="PATH",
+                   help="propose this pre-written plan (JSON with an 'outcomes' list) instead of "
+                        "calling the model planner; it is still gated, human-approved and mapped.")
     p.add_argument("--delegate", default=None, metavar="NAME",
                    help="run unattended (overnight): pre-approve the plan and derived map as NAME's "
                         "standing approval. Budget, never-rules and consequential sign-offs still apply.")

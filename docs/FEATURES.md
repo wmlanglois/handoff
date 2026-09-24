@@ -14,7 +14,7 @@ These ends are deliberate:
 
 - Scope approval and assignment approval. `start` stops before either is skipped.
 - A never-rule from intake S4 or E4. The assignment is parked. It is not dispatched.
-- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. `C` runs until done or stuck; `D` runs overnight. The selected letter is honored within the approved budget regardless of Q0 (domain). Q0 does not cap autonomy. The letter is not a worker count.
+- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. `C` runs until done or stuck; `D` runs overnight. Overnight (`D`) still stops at the plan and map approval gates unless `autonomous --delegate` pre-approves them; the cadence letter governs how often the running loop pauses to show a draft, not the approval gates. The selected letter is honored within the approved budget regardless of Q0 (domain). Q0 does not cap autonomy. The letter is not a worker count.
 - `--stagnation-k` on `verified.py`: consecutive rounds with no achievement and no new evidence.
 - `--investigation-budget` on `verified.py`: evidence keeps arriving and achievement never does.
 - An architect action, one of nine: `REPAIR`, `FOLLOWON`, `PARK`, `STOP`, `INVESTIGATE`, `REVISIT`, `PROPOSAL`, `QUESTION`, `CHALLENGE`.
@@ -50,7 +50,7 @@ Package files: `project.json`, `observed.md`, optional `brief.md` and `proposed.
 
 Existing packages with confirmed intake or already-recorded drafts continue without retroactive first-use choices. No new model call is inferred from that compatibility path.
 
-Goal criteria come from the confirmed S2 lines and, when a machine can check the work, from V2 and V3. A done-when outcome must set `integrator` to `handoff` and a `dest`. The integration group and frozen check are recorded before assignment approval. `approve` approves the plan; `approve-map` freezes the project baseline for autonomous mode.
+Goal criteria come from the confirmed S2 lines and, when a machine can check the work, from V2 and V3. The planner is handed only these intake criteria; a criterion added to the goal another way that no accepted outcome covers is recorded as an `UNPLANNED_CRITERION` with guidance (supply it via `plan --plan-file`, or run it as a separate goal), not dropped silently. A done-when outcome must set `integrator` to `handoff` and a `dest`. The integration group and frozen check are recorded before assignment approval. `approve` approves the plan; `approve-map` freezes the project baseline for autonomous mode.
 
 Related calls:
 
@@ -92,11 +92,11 @@ Sends an unapproved proposed plan back to the planner on the same goal. Records 
 
 Packet-only mode dispatches the approved plan and stops; **packet completion is not project completion**. Autonomous mode adds one connected proof: approved full `scoped.md` → approved interface map → receipt-bound candidate → one fresh-process launch journey → one owned, evidence-based repair if needed → a promoted checkpoint. The reusable entry point is `run/conductor.py`.
 
-`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME]`
+`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME] [--delegate NAME]`
 
 `--decisions` and `--seconds` are required integers. `--workers` is a comma-separated list of worker names. Default is `cluster`. `--map` is a JSON file and is accepted only together with `--as`. The file is one object: `components` is a list of `{id, path, provides, calls?}`, and `milestone` is `{id, command}` where `command` is a list of strings, the first usually the Python executable and the last the launcher path. A person can skip `--map` and approve the derived map with `approve-map --from-proposed` instead.
 
-Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately from the North Star, and sets autonomous mode with a durable budget. One entry walks the ordinary path with a human stop at each consequential step: from a freshly approved scope with no plan it runs the ordinary planner and stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE` when the intake done-when answers are not in yet); once the plan is approved it derives and proposes an interface map and stops at `AWAITING_MAP_APPROVAL`; once the map is approved it runs. It never silently approves a plan or a map. With no approved map the loop stops `BLOCKED`. `--decisions 0` is a visible choice, never a hidden zero.
+Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately from the North Star, and sets autonomous mode with a durable budget. One entry walks the ordinary path with a human stop at each consequential step: from a freshly approved scope with no plan it runs the ordinary planner and stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE` when the intake done-when answers are not in yet); once the plan is approved it derives and proposes an interface map and stops at `AWAITING_MAP_APPROVAL`; once the map is approved it runs. `--delegate NAME` runs unattended (overnight): the operator pre-approves the proposed plan and the derived map as NAME's standing approval, and the loop proceeds without stopping at the gates. This is the operator's explicit up-front approval, not a silent one; the budget, the never-rules, and consequential sign-offs remain hard bounds. Without `--delegate` it never silently approves a plan or a map. With no approved map the loop stops `BLOCKED`. `--decisions 0` is a visible choice, never a hidden zero.
 
 The recorded time and decision budgets are cumulative across resume and restart. A repeated `autonomous` command does not reset them. A `BUDGET` stop reports what remains. Time is charged from a persisted active marker, including the gap after a crash, in whole seconds. A failed spend write stops the loop. Admitting a journey repair spends one decision. If the ledger also has `run_budget.repairs`, that ceiling stops new repairs on its own. There is no `autonomous` flag for the repair ceiling. An in-flight worker is left to finish.
 

@@ -84,6 +84,8 @@ Prints goal ids.
 
 `--tool-mode` sets the same execution policy for this new standalone goal. Omission keeps the legacy per-contract behavior. Imported contracts are checked against explicit chat-only denial; tools mode provisions new contracts before the plan gate.
 
+Repair and revisit carry: tools workers use staged `_carry/` references. Chat-only workers receive complete UTF-8 carry text in the request after SHA-256 verification on executor start, including resume. The initial request containing carry is protected from conversation trimming. Missing, altered or non-text carry raises an explicit carry error; essential context exceeding the estimated input budget raises context overflow before generation. Hidden oracle code is not added to this reference. No server configuration or execution authority changes.
+
 Opens a goal and proposes a plan. `--criterion` is repeatable; each value is one acceptance sentence. `--budget` is an integer cap on assignments; `0` means no cap. `--plan-file` is a JSON object with an `outcomes` list (or `jobs`) of contracts, used instead of a model. `--project-root` is the directory where declared relative sources resolve. `--integration` is a JSON file of groups, destinations, and a frozen check. `--integration-check` is that check's Python source.
 
 Before approval, the proposed plan must be dependency-closed and launchable. Every `needs` edge names a different planned or already accepted assignment, not a filename; orphaned and cyclic edges are refused. If the approved launch milestone says `python <file>` and the baseline lacks that file, an outcome must produce that exact path. One destination has one owning outcome; checks for multiple criteria on the same file belong in one outcome's `done_when`.
@@ -354,6 +356,15 @@ Private project data, generated runs, domain-specific corpora and adapters, and 
 - `trivial_error` is a failure class for syntax and name errors. `ModuleNotFoundError` and `ImportError` stay `missing_inputs_or_tools`. `STOP` is refused when every recorded failure is one of those two. The repair stays on this goal.
 - A pass or fail example that is not an `assert` line does not fail the project check. The plan parks a question on criterion `examples`. `python run/conductor.py sign-off <goal> examples --by <name>` closes it.
 - `scan_emitted` reads the worker's deliverable. A forbidden call there keeps the round from being accepted and sends a REDO on the same card.
+
+## Generation diagnostics
+
+Diagnostic support (#27): chat telemetry includes `generation` with the actual requested
+output limit, provider finish reason and usage when supplied. Chat worker logs record it;
+the bundled tool loop saves per-call evidence in its checkpoint and reports it in its log.
+Null counts mean unavailable, not zero. Input-token estimates and configured context are
+labeled separately. This does not yet provide the complete structured failure/architect
+routing required by #27, and does not change sampling, model-server settings or acceptance.
 
 ## Not built yet
 

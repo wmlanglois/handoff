@@ -22,6 +22,13 @@ Issue #18's historical wording conflates existence/shape checks with tautologies
 
 ## Remaining connections
 
+Implemented correction: [#26](https://github.com/wmlanglois/handoff/issues/26)
+delivers hash-checked carry text to chat-only repair/revisit requests and protects it from
+context trimming. Offline request-boundary tests cover all three repair constructors;
+no live repair success is claimed. Worker readiness/profiles remain in
+[#25](https://github.com/wmlanglois/handoff/issues/25), and generation termination evidence
+remains in [#27](https://github.com/wmlanglois/handoff/issues/27).
+
 | Issue | What exists | What remains |
 |---|---|---|
 | [#6](https://github.com/wmlanglois/handoff/issues/6) | Diagnostic for extra uncovered goal criteria after a successful intake-based plan. | Pass authorized seeded criteria into planning or explicitly reject them before model calls; do not leave hidden unplannable state. |
@@ -50,5 +57,18 @@ Local regression evidence is distinct from public CI and live deployment evidenc
 This reconciliation does not re-verify every external paper, vendor claim, or repository in those research documents. Their citations and original text are retained. Research proposals such as richer memory retrieval, independent critique, and workflow improvements require their own measured evaluations; no blanket claim is made that they are implemented or improve outcomes.
 
 ## Updating the record
+
+September 25 environment follow-up:
+
+- [Technical environment guide](ENVIRONMENT-REQUIREMENTS.md) is linked before first-use
+  commands. It documents current setup plus clearly marked qualification work still needed.
+- [Phase 2 environment proposal](PHASE-2-ENVIRONMENT.md) separates the chat/workbench layer
+  from backend inspection and opt-in tuning; it records headroom-calculator constraints.
+- #27 now has response-evidence preservation for chat streaming/nonstreaming and the
+  bundled tool loop. Provider usage remains unknown when omitted. Transport/budget failure
+  classification and architect routing remain open; this is not complete #27 coverage.
+- Private offline suite: 121 passing at this checkpoint, including nested carry staged and
+  read through the local tool service, with missing/tampered snapshots refused. No live
+  generation or server configuration changes were performed. Private tests are not published.
 
 When a fix ships, link the commit from its issue and state the exact behavior changed, the test boundary, and remaining scope. Keep successful narrow fixes credited. Reopen an issue for unmet acceptance criteria or create a clearly distinct follow-up; avoid duplicate continuation issues and avoid turning “implemented” into “live-validated.”

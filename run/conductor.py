@@ -1636,7 +1636,8 @@ def build_repair_contract(goal_id, *, owner, spec, note, journey, blobs, candida
         "Cross-project reviewer (Spark): {spark}\n\n"
         "Interface map row you own: provides {prov}; calls {calls}.\n"
         "Accepted dependencies staged in your workspace: {deps}.\n"
-        "Your previous {owner} is preserved read-only at `_carry/{owner}` -- read it and fix it."
+        "Your previous {owner} is preserved read-only at `_carry/{owner}`. With file tools, "
+        "read that reference; without tools, use its contents supplied in the request. Fix it."
     ).format(owner=owner, cmd=" ".join(str(t) for t in command), out=transcript[-1500:] or "(no output)",
              spark=spark or "none", prov=(row.get("provides") or "?"), calls=(row.get("calls") or "-"),
              deps=", ".join(dep_names) or "(none)")

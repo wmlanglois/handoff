@@ -6,11 +6,23 @@ import datetime as dt
 import json
 from pathlib import Path
 
-RUNS = Path(__file__).resolve().parent / "runs"
+RUNS = Path(__file__).resolve().parent / "runs"   # default only; see _runs()
+
+
+def _runs():
+    """The shared run-state root (FLEET_RUNS_DIR aware). Event logs are evidence the architect reads
+    (failure text, stop reasons), so they must land where it looks, not in whichever checkout ran."""
+    try:
+        import fleet
+        return fleet.runs_root()
+    except Exception:
+        return RUNS
+
 
 def logger(component, echo=True):
-    RUNS.mkdir(exist_ok=True)
-    path = RUNS / f"{component}-{dt.datetime.now():%Y%m%d-%H%M%S}.jsonl"
+    runs = _runs()
+    runs.mkdir(parents=True, exist_ok=True)
+    path = runs / f"{component}-{dt.datetime.now():%Y%m%d-%H%M%S}.jsonl"
     fh = path.open("a", encoding="utf-8")
 
     def _show(value):

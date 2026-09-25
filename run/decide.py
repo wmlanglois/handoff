@@ -47,7 +47,8 @@ REPAIR, FOLLOWON, PARK, STOP = "REPAIR", "FOLLOWON", "PARK", "STOP"
 INVESTIGATE, REVISIT = "INVESTIGATE", "REVISIT"
 PROPOSAL, QUESTION = "PROPOSAL", "QUESTION"
 CHALLENGE = "CHALLENGE"
-ACTIONS = (REPAIR, FOLLOWON, PARK, STOP, INVESTIGATE, REVISIT, PROPOSAL, QUESTION, CHALLENGE)
+ADJUST = "ADJUST"
+ACTIONS = (REPAIR, FOLLOWON, PARK, STOP, INVESTIGATE, REVISIT, PROPOSAL, QUESTION, CHALLENGE, ADJUST)
 
 SYSTEM = """You are the ARCHITECT of an autonomous work loop. A batch of work just finished and
 nothing is currently dispatchable. Decide the single next action. You do not do the work.
@@ -65,6 +66,7 @@ Reply with JSON ONLY, one object, no prose around it:
                             "probe": {"tool": "list"|"read"|"grep", "target": "<relative path or glob>",
                                       "pattern": "<regex, grep only>"}, "why": "..."}
   {"action": "REVISIT",  "assignment": "<name>", "why": "<the new evidence that makes this approach relevant>"}
+  {"action": "ADJUST",   "assignment": "<name>", "max_output_tokens": <int>, "why": "<the recorded evidence>"}
   {"action": "PROPOSAL", "proposal_id": "P-...", "resolution": "accept"|"defer"|"reject", "reason": "...",
                          "criterion_id": "<id, accept only>", "name": "<kebab-name, accept only>",
                          "brief": "<what the worker builds, accept only>", "approach": "<optional>",
@@ -234,6 +236,18 @@ def state_delta(goal_id, last_results=None, root=None, observe_root=None):
             "last_results": list(last_results or [])}
 
 
+SYSTEM += """
+OUTPUT BUDGETS ARE NOT FIXED. Each assignment's failure evidence includes a `generation evidence` line:
+how many model turns were LENGTH-LIMITED (stopped at the per-call output limit), the limit used, the
+lane's context and its output ceiling, and whether the operator PINNED the limit. A length-limited
+delivery is a truncated file, not wrong code: do not REPAIR the code, split the work or shrink the
+packet as the first response. Use ADJUST to raise that assignment's max_output_tokens above the limit
+that was cut off, at or below the ceiling shown; it reopens the assignment under the SAME acceptance.
+The harness refuses ADJUST without recorded length-limited turns, above the ceiling, or when the limit
+is pinned (then PARK with a question for the operator). ADJUST never changes server settings.
+"""
+
+OUTPUT_LIMIT = "output_limit"
 MISSING_INFO, INTERFACE, MISSING_INPUTS, NO_DELIVERABLE, BAD_STRATEGY, PROGRESSING, TRIVIAL, UNKNOWN = (
     "missing_information", "interface_mismatch", "missing_inputs_or_tools", "no_deliverable_produced",
     "unsuccessful_strategy", "progressing", "trivial_error", "unclear")
@@ -246,6 +260,11 @@ def classify_failure(text):
     t = (text or "").lower()
     if not t.strip():
         return UNKNOWN, "INVESTIGATE the failure: no failure text was recorded to act on"
+    if "length-limited" in t:
+        # First: a file cut off at the output limit surfaces downstream as a syntax, import or
+        # "no deliverable" error, and treating those as the cause repairs code that was never wrong.
+        return OUTPUT_LIMIT, ("ADJUST this assignment's max_output_tokens above the limit that cut it off "
+                              "(within the ceiling shown): the delivery was truncated, not wrong")
     if any(k in t for k in ("syntaxerror", "indentationerror", "taberror", "nameerror", "unboundlocalerror")):
         return TRIVIAL, ("REPAIR the same assignment on this goal. A syntax or name error is not a "
                          "failed purpose, and it is not a reason to STOP or to open a new goal.")
@@ -274,6 +293,65 @@ def _repair_base(name):
     return re.sub(r"(-r\d+)+$", "", name or "")
 
 
+def generation_summary(name):
+    """(text, facts) from the recorded stop reasons for run `name` (#27): how many model turns were
+    cut off at the output limit, the limit used, the lane's context and output ceiling, whether the
+    operator pinned the limit, and which tool runtime ran. This is what lets the architect tell a
+    truncated delivery from wrong code -- and what ADJUST is validated against."""
+    import generation
+    root = fleet_runs_root()
+    tool_ws = re.sub(r"[^A-Za-z0-9_-]", "-", "verified-" + str(name))
+    files = sorted(list(root.glob("verified-" + name + "-*.jsonl")) + list(root.glob("tooljob-" + tool_ws + "-*.jsonl")),
+                   key=lambda q: q.stat().st_mtime)
+    turns = limited = 0
+    max_requested = max_prompt = 0
+    worker = runtime = None
+    for f in files:
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            ev = row.get("event")
+            if ev == "worker" and row.get("worker"):
+                worker = row["worker"]
+            elif ev == "tool_runtime":
+                runtime = row.get("kind")
+            elif ev == "generation" and isinstance(row.get("evidence"), dict):
+                e = row["evidence"]
+                turns += 1
+                if e.get("response_kind") == "length_limited" or e.get("finish_reason") == "length":
+                    limited += 1
+                if isinstance(e.get("requested_max_tokens"), int):
+                    max_requested = max(max_requested, e["requested_max_tokens"])
+                pt = (e.get("usage") or {}).get("prompt_tokens")
+                if isinstance(pt, int):
+                    max_prompt = max(max_prompt, pt)
+    if worker is None:
+        try:
+            worker = json.loads((root / "goal-cards" / (name + ".json")).read_text(encoding="utf-8")).get("worker")
+        except (OSError, ValueError):
+            worker = None
+    import fleet
+    ctx = (fleet.WORKERS.get(worker) or {}).get("ctx") if worker else None
+    pinned = generation.pinned_output_limit(worker) if worker else None
+    ceiling = generation.output_ceiling(worker, max_prompt or None) if worker else 0
+    facts = {"turns": turns, "length_limited": limited, "max_requested": max_requested, "worker": worker,
+             "ctx": ctx, "max_prompt": max_prompt or None, "ceiling": ceiling, "pinned": pinned,
+             "runtime": runtime}
+    if not turns:
+        return ("generation evidence: none recorded for this run (the runtime may not report stop "
+                "reasons)"), facts
+    head = ("{0} of {1} model turns LENGTH-LIMITED (stopped at the output limit)".format(limited, turns)
+            if limited else "none of {0} model turns was cut off by the output limit".format(turns))
+    return ("generation evidence: {0}; max_tokens up to {1}; lane {2} context {3}, largest reported "
+            "prompt {4}, output ceiling {5}; output limit {6}; tool runtime {7}".format(
+                head, max_requested or "unknown", worker or "unknown", ctx or "unknown",
+                max_prompt or "unknown", ceiling or "unknown",
+                "PINNED by operator at {0}".format(pinned) if pinned else "not pinned (ADJUST may raise it)",
+                runtime or "n/a")), facts
+
+
 def failure_text(name, limit=1400):
     """Why something actually failed, from the run's own records.
 
@@ -289,7 +367,7 @@ def failure_text(name, limit=1400):
     bits = ["outcome: {0}".format(rec.get("outcome")),
             "basis: {0}".format(rec.get("basis", ""))[:300]]
 
-    logs = sorted(ROOT.glob("runs/verified-" + name + "-*.jsonl"),
+    logs = sorted(fleet_runs_root().glob("verified-" + name + "-*.jsonl"),
                   key=lambda q: q.stat().st_mtime, reverse=True)
     if logs:
         # Scan EVERY failing oracle row and prefer one that names the failure. The newest row is
@@ -311,6 +389,8 @@ def failure_text(name, limit=1400):
                 best = msg[-300:].strip()
         if best:
             bits.append("the check actually said: " + best)
+    # Early, so the length limit on this text never cuts it off.
+    bits.append(generation_summary(name)[0])
 
     # Show the architect WHAT THE WORKER ACTUALLY WROTE -- the REAL deliverable, which for a tools
     # job is a package-relative file in the tool workspace, not output.md in the run dir. Reading
@@ -702,6 +782,37 @@ def validate(decision, delta):
             return False, "REVISIT of {0!r}: it is still running".format(name)
         if len(str(decision.get("why") or "").strip()) < 20:
             return False, "REVISIT needs the evidence that makes the approach relevant again"
+    if act == ADJUST:
+        name = decision.get("assignment")
+        a = delta["assignments"].get(name)
+        if a is None:
+            return False, "ADJUST names unknown assignment {0!r}".format(name)
+        if a["criterion"] not in delta["unmet"]:
+            return False, "ADJUST of {0!r}: its criterion is already met".format(name)
+        if a["status"] == "running":
+            return False, "ADJUST of {0!r}: it is still running".format(name)
+        n = decision.get("max_output_tokens")
+        if type(n) is not int or n <= 0:
+            return False, "ADJUST needs max_output_tokens as a positive integer"
+        if len(str(decision.get("why") or "").strip()) < 20:
+            return False, "ADJUST needs the recorded evidence that justifies it"
+        try:
+            rid = goals.run_id(delta.get("goal_id"), name)
+        except Exception:
+            rid = name
+        _t, f = generation_summary(rid)
+        if not f["length_limited"]:
+            return False, ("ADJUST of {0!r} refused: no length-limited generation is recorded for it; "
+                           "raise a budget only on evidence that the output limit cut it off".format(name))
+        if f["pinned"]:
+            return False, ("ADJUST of {0!r} refused: the output limit for {1} is PINNED by the operator at {2}; "
+                           "PARK with a question instead".format(name, f["worker"], f["pinned"]))
+        if n <= f["max_requested"]:
+            return False, ("ADJUST of {0!r}: {1} does not exceed the limit that was cut off ({2})".format(
+                name, n, f["max_requested"]))
+        if not f["ceiling"] or n > f["ceiling"]:
+            return False, ("ADJUST of {0!r}: {1} exceeds the output ceiling {2} for lane {3} (context minus "
+                           "the largest reported prompt and a margin)".format(name, n, f["ceiling"], f["worker"]))
     return True, "ok"
 
 
@@ -868,6 +979,15 @@ def apply(goal_id, decision, delta, root=None, sources="", observe_root=None, as
                             **kw)
         return "revisited {0} as {1} under the same acceptance".format(decision["assignment"],
                                                                         new)
+
+    if act == ADJUST:
+        n = int(decision["max_output_tokens"])
+        new = goals.revisit(goal_id, decision["assignment"],
+                            why="output budget raised to {0} tokens on recorded length-limited "
+                                "generations: {1}".format(n, str(decision.get("why", ""))),
+                            contract_update={"max_output_tokens": n}, **kw)
+        return "adjusted {0}: max_output_tokens {1}, reopened as {2} under the same acceptance".format(
+            decision["assignment"], n, new)
 
     if act == CHALLENGE:
         cid = decision["criterion_id"]

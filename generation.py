@@ -4,8 +4,9 @@
 def worker_output_limit(worker, fallback):
     """Operator-owned output allowance, shared by worker chat and tool execution.
 
-    No model or architect may change this setting through a packet. An absent profile
-    retains the existing limit; a configured value is a pinned value, not permission to tune.
+    A configured value is PINNED: it wins over everything, including an architect ADJUST. An absent
+    profile uses `fallback`, which is the assignment's own budget (raised by ADJUST from recorded
+    evidence) or the harness default.
     """
     from fleet import setting
     profiles = setting("WORKER_OUTPUT_LIMITS", {})
@@ -15,6 +16,37 @@ def worker_output_limit(worker, fallback):
     if type(value) is not int or value <= 0:
         raise ValueError("worker output limit must be a positive integer: " + str(worker))
     return value
+
+
+def pinned_output_limit(worker):
+    """The operator's pinned output limit for `worker`, or None when the limit is not pinned."""
+    from fleet import setting
+    profiles = setting("WORKER_OUTPUT_LIMITS", {})
+    value = profiles.get(worker) if isinstance(profiles, dict) else None
+    return value if type(value) is int and value > 0 else None
+
+
+#: Assumed prompt size when the server has not reported one, and headroom kept beyond the prompt.
+DEFAULT_PROMPT_TOKENS = 7168
+PROMPT_MARGIN = 1024
+
+
+def output_ceiling(worker, observed_prompt_tokens=None):
+    """The largest output limit a packet on `worker` can safely request: its context minus the
+    prompt (the largest the server actually reported, else a conservative default) and a margin.
+    Never above a known server generation cap (`max_output` on the worker record). 0 if unknown."""
+    import fleet
+    w = fleet.WORKERS.get(worker) or {}
+    try:
+        ctx = int(w.get("ctx") or 0)
+    except (TypeError, ValueError):
+        ctx = 0
+    prompt = observed_prompt_tokens if isinstance(observed_prompt_tokens, int) and observed_prompt_tokens > 0         else DEFAULT_PROMPT_TOKENS
+    ceiling = max(0, ctx - prompt - PROMPT_MARGIN)
+    cap = w.get("max_output")
+    if isinstance(cap, int) and cap > 0:
+        ceiling = min(ceiling, cap)
+    return ceiling
 
 
 def response_evidence(response, request):

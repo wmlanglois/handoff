@@ -1048,8 +1048,13 @@ def alternatives(goal_id, criterion_id, root=None):
     return out
 
 
+#: The only contract fields a revisit may change. None of them is acceptance (oracle, done_when,
+#: criterion): an ADJUST raises an output budget, it never lowers the bar.
+REVISIT_UPDATABLE = ("max_output_tokens",)
+
+
 @_serialised
-def revisit(goal_id, name, *, why, root=None):
+def revisit(goal_id, name, *, why, root=None, contract_update=None):
     """Re-open a preserved alternative as a NEW assignment with the SAME acceptance (LF-04).
 
     Not the same name: re-running `name` would overwrite `runs/verified-<name>` and erase the
@@ -1076,6 +1081,12 @@ def revisit(goal_id, name, *, why, root=None):
     c["name"] = new
     c["origin"] = "revisit"
     c["lineage"] = list(c.get("lineage") or []) + [name]
+    for key, value in (contract_update or {}).items():
+        if key not in REVISIT_UPDATABLE:
+            raise GoalError(f"a revisit may not change {key!r}; only {list(REVISIT_UPDATABLE)}")
+        if key == "max_output_tokens" and (type(value) is not int or value <= 0):
+            raise GoalError("max_output_tokens must be a positive integer")
+        c[key] = value
     # `needs` is KEPT. Clearing it (the first version) let a revisit dispatch past an unfinished
     # prerequisite: the acceptance test was the same, but the assignment's other obligations were
     # not. `next_work` applies the ordinary dependency rule to the copy.
@@ -1766,6 +1777,7 @@ def card_for(contract, doc=None):
             "deps": deps,
             "inputs": inputs,
             "carry": dict(contract.get("carry") or {}),
+            "max_output_tokens": contract.get("max_output_tokens"),
             "carry_error": contract.get("carry_error") or "",
             "missing_sources": missing,
             "capability": contract.get("capability", ""),

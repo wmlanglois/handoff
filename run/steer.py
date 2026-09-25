@@ -250,7 +250,7 @@ def target_of(decision, delta):
     """Which criterion a decision is about, for enforcing the verdict."""
     d = decision or {}
     act = (d.get("action") or "").upper()
-    if act in ("REPAIR", "REVISIT"):
+    if act in ("REPAIR", "REVISIT", "ADJUST"):
         a = (delta.get("assignments") or {}).get(d.get("assignment")) or {}
         return a.get("criterion")
     return d.get("criterion_id")

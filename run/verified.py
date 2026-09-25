@@ -1916,7 +1916,9 @@ def main():
         sys.exit(EXIT_CODES["worker-unavailable"])
     name = card["name"]; worker = card["worker"]; brief = card["brief"]
     from generation import worker_output_limit
-    worker_max_tokens = worker_output_limit(worker, _LOOP.worker_max_tokens)
+    # Pinned operator limit > this assignment's own budget (raised by an architect ADJUST from
+    # recorded length-limited turns) > the harness default.
+    worker_max_tokens = worker_output_limit(worker, int(card.get("max_output_tokens") or _LOOP.worker_max_tokens))
     carry_context = chat_carry_context(card)
     brief += carry_context
     # precedence: explicit CLI flag > card field > default 'conversation' (keep the model's context
@@ -2070,6 +2072,7 @@ def main():
                 try:
                     r = tooljob.run_tooljob(worker, base + reject_tail, tool_workspace_id(name),
                                             max_rounds=card.get("max_tool_rounds", 12),
+                                            max_tokens=int(card.get("max_output_tokens") or 1400),
                                             stage=_stage or None, artifact=_art, attempt=rnd,
                                             lineage=_tool_lineage_token(ws),
                                             branch=bool(card.get("branch")))

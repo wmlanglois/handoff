@@ -42,11 +42,70 @@ def assertion_lines(source: str) -> list:
     return [ln.strip() for ln in _ASSERT_LINE.findall(source or "")]
 
 
+_TRUTHY_LITERAL = re.compile(r"""^(?:True|[1-9][0-9]*(?:\.[0-9]+)?|"[^"]+"|'[^']+')$""", re.I)
+# `... or True` / `... or 7` (string contents are blanked before these run, so a literal
+# like `== "x or True"` is not mistaken for a tautology).
+_OR_TRUTHY = re.compile(r"""\bor\s+(?:True|[1-9][0-9]*(?:\.[0-9]+)?)(?=\s|$|\)|:)""", re.I)
+_TRUTHY_OR = re.compile(r"""(?:^|\()\s*(?:True|[1-9][0-9]*(?:\.[0-9]+)?)\s+or\b""", re.I)
+_LITERAL_TRUE = {"true", "true == true", "1", "1 == 1", "pass"}
+
+
+def _assert_condition(line: str) -> str:
+    """The condition expression of an `assert` line, with any trailing message removed."""
+    s = str(line or "").strip()
+    if not re.match(r"assert\b", s, re.I):
+        return ""
+    s = s[len("assert"):].strip().rstrip(";")
+    depth = 0
+    inq = None
+    for i, ch in enumerate(s):
+        if inq:
+            if ch == inq and s[i - 1] != "\\":
+                inq = None
+            continue
+        if ch in "\"'":
+            inq = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            return s[:i].strip()
+    return s.strip()
+
+
+def assert_can_fail(line: str) -> bool:
+    """False when an `assert` line is tautological by construction -- a bare truthy literal, a
+    literal identity (`1 == 1`), or an `or`-disjunction with a truthy-literal operand
+    (`... or True`, `True or ...`) -- so it can never fail on a wrong artifact. Real assertions
+    (comparisons, variable disjunctions, existence checks like `os.path.exists(...)`) return True."""
+    cond = _assert_condition(line)
+    if not cond:
+        return False
+    flat = re.sub(r"\s+", " ", cond).strip()
+    if flat.lower() in _LITERAL_TRUE or _TRUTHY_LITERAL.match(flat):
+        return False
+    blanked = re.sub(r"\"[^\"]*\"|'[^']*'", '""', flat)  # neutralize string contents
+    if _OR_TRUTHY.search(blanked) or _TRUTHY_OR.search(blanked):
+        return False
+    return True
+
+
 def vacuous_oracle(oracle) -> bool:
-    """True when an oracle cannot fail on a wrong artifact. `assert True` is the live case."""
+    """True when an oracle cannot fail on a wrong artifact.
+
+    Two ways an oracle is vacuous: the whole thing is empty / `assert True` / `pass`, or it
+    LOOKS like a check but every one of its assertions is tautological by construction
+    (`... or True`, a bare truthy literal, `1 == 1`). The second is the omission that lets a
+    packet go green having verified nothing -- see plan item A07 (contract-to-check coverage)."""
     text = re.sub(r"(?m)#.*$", "", str(oracle or ""))
-    text = re.sub(r"\s+", " ", text).strip().rstrip(";")
-    return text.lower() in {"", "assert true", "pass"}
+    flat = re.sub(r"\s+", " ", text).strip().rstrip(";")
+    if flat.lower() in {"", "assert true", "pass"}:
+        return True
+    asserts = assertion_lines(oracle)
+    if asserts and not any(assert_can_fail(a) for a in asserts):
+        return True
+    return False
 
 
 def worker_oracle(check_source: str) -> str:

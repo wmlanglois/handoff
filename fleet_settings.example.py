@@ -82,6 +82,12 @@ CLUSTER_MODEL = "/path/on/the/mac/to/Qwen3.8-27B-4bit-mtp"
 # PRIMARY_WORKER = "my-worker"
 # SKEPTIC_WORKER = "my-worker"
 
+# Optional pinned output-token limits for CODING WORKERS, shared by chat and tools.
+# Choose a tested allowance that leaves room for input/history/tools in that lane's context.
+# Omitted names retain existing defaults (chat 4096, tools 1400). This does not change
+# server context, sampling, reasoning or concurrency, and does not authorize auto-tuning.
+# WORKER_OUTPUT_LIMITS = {"my-worker": 4096}
+
 #: Where endpoints you ADD AT RUNTIME are stored (see below). Default: a per-user state file
 #: outside the repo -- %LOCALAPPDATA%\fleet\workers.json on Windows,
 #: $XDG_STATE_HOME/fleet/workers.json (or ~/.local/state/fleet/workers.json) elsewhere. Point it

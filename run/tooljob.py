@@ -400,6 +400,8 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
             emit.close()
             raise RuntimeError("required project material failed to stage into the tool workspace: "
                                + ", ".join(failed))
+    from generation import worker_output_limit
+    max_tokens = worker_output_limit(worker, max_tokens)
     job = {"prompt": brief, "workspace_id": workspace_id, "max_rounds": max_rounds, "max_tokens": max_tokens}
     # Logical-job continuity across OUTER attempts (N -> N+1) and process restart: by default a
     # retry continues this execution's own prior work (bounded, read-only, no side-effect replay);
@@ -418,10 +420,15 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
     if artifact:
         # The delivery is an explicit files.write receipt, NOT a side effect a later read might see.
         job["prompt"] += (
-            "\nFinal delivery: commit {0!r} using files.write. You may use python_run for "
-            "implementation and checks, but a successful Python call alone is not a delivery "
-            "receipt. Do not modify the artifact after its final files.write.".format(artifact))
-    res = agent.run(d, execution_id, job, {"url": w["url"], "model": w["model"], "slots": 2})
+            "\nFinal delivery: produce {0!r} with a successful receipted files operation. "
+            "Use files.write, or files.append/files.edit ONLY if the service advertises them. "
+            "For large files, write a small section then use supported guarded edits; use the "
+            "latest returned sha256 as expected_sha256. The last successful mutation receipts "
+            "the whole resulting file; do not retransmit it just to deliver. Run relevant checks. "
+            "python_run alone is not a delivery receipt. Do not change the artifact after its "
+            "final receipted mutation.".format(artifact))
+    res = agent.run(d, execution_id, job, {"url": w["url"], "model": w["model"],
+                                        "ctx": w.get("ctx", 8192), "slots": 2})
     for index, evidence in enumerate(res.get("generations", [])):
         emit("generation", index=index, evidence=evidence)
     if res.get("loop_stop"):
@@ -471,10 +478,14 @@ def _write_receipt_shas(messages, target):
                 response = json.loads(message.get("content") or "{}")
             except (TypeError, ValueError):
                 continue
-            if (args.get("action") != "write" or _norm_rel(args.get("path")) != target
+            if (args.get("action") not in ("write", "edit", "append") or _norm_rel(args.get("path")) != target
                     or not response.get("ok")):
                 continue
             receipt = response.get("result") or {}
+            if args.get('action') != 'write' and (
+                    receipt.get('operation') != args.get('action') or not args.get('expected_sha256')
+                    or receipt.get('before_sha256') != args.get('expected_sha256')):
+                continue
             if _norm_rel(receipt.get("path")) == target and receipt.get("sha256"):
                 shas.append(receipt.get("sha256"))
     return shas
@@ -496,9 +507,13 @@ def _all_write_receipts(messages):
                 resp = json.loads(message.get("content") or "{}")
             except (TypeError, ValueError):
                 continue
-            if args.get("action") != "write" or not resp.get("ok"):
+            if args.get("action") not in ("write", "edit", "append") or not resp.get("ok"):
                 continue
             receipt = resp.get("result") or {}
+            if args.get('action') != 'write' and (
+                    receipt.get('operation') != args.get('action') or not args.get('expected_sha256')
+                    or receipt.get('before_sha256') != args.get('expected_sha256')):
+                continue
             if receipt.get("path"):
                 out.append((_norm_rel(receipt.get("path")), receipt.get("sha256")))
     return out

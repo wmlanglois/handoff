@@ -42,14 +42,19 @@ def run(dispatcher, execution_id, job, worker):
         messages = saved["messages"]
         rounds = saved["rounds"]
         generations = saved.get("generations", [])
+        incomplete = saved.get("incomplete", [])
+        truncations = saved.get("truncations", 0)
     else:
         messages = [{"role": "user", "content": job["prompt"]}]
         rounds = 0
         generations = []
+        incomplete = []
+        truncations = 0
 
     def save():
         dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds,
-                                             "generations": generations})
+                                             "generations": generations, "incomplete": incomplete,
+                                             "truncations": truncations})
 
     save()
     maximum = int(job.get("max_rounds", 16))
@@ -67,14 +72,47 @@ def run(dispatcher, execution_id, job, worker):
         if pending is not None:
             pass
         else:
+            if incomplete and incomplete[-1].get("reason") == "content_filter":
+                raise RuntimeError("tool content-filter stop; checkpoint preserved; no calls executed")
+            if truncations >= 2:
+                raise RuntimeError("tool output capacity exhausted after two length stops; "
+                                   "checkpoint preserved; no incomplete calls executed")
             request = {
                 "model": worker["model"], "messages": messages, "tools": tools,
                 "tool_choice": "auto", "max_tokens": int(job.get("max_tokens", 1400)),
                 "temperature": 0.2, "stream": False,
             }
+            # Conservative estimate includes tool schemas and call arguments, not just content.
+            # Do not trim a tool-call/result group or silently discard essential project material.
+            estimated_input = (len(json.dumps({"messages": messages, "tools": tools},
+                                               ensure_ascii=False)) + 3) // 4
+            if estimated_input + request["max_tokens"] + 512 > int(worker.get("ctx", 8192)):
+                save()
+                raise RuntimeError("tool context capacity exceeded (estimated input + output + reserve); "
+                                   "checkpoint preserved; configure a supported budget or reduce input")
             response = _post(worker["url"].rstrip("/") + "/v1/chat/completions", request, timeout=300)
             generations.append(response_evidence(response, request))
             pending = response["choices"][0]["message"]
+            reason = response["choices"][0].get("finish_reason")
+            if reason in ("length", "content_filter"):
+                # Keep returned fragments as unexecuted diagnostics, never valid tool history.
+                incomplete.append({"round": rounds, "reason": reason, "message": pending})
+                rounds += 1
+                if reason == "content_filter":
+                    save()
+                    raise RuntimeError("tool content-filter stop; checkpoint preserved; no calls executed")
+                truncations += 1
+                messages.append({"role": "user", "content":
+                    "The last response reached the output limit. None of its tool calls executed. "
+                    "Previously completed workspace edits remain. Inspect existing work and use a "
+                    "smaller complete operation using advertised edit/append tools if available. "
+                    "If no supported delivery operation can fit, report that "
+                    "capacity blocker instead of regenerating the same oversized file."})
+                save()
+                if truncations >= 2:
+                    raise RuntimeError("tool output capacity exhausted after two length stops; "
+                                       "checkpoint preserved; no incomplete calls executed")
+                continue
             if not pending.get("tool_calls"):
                 save()
                 return {"choices": [{"message": {"content": pending.get("content") or ""}}],

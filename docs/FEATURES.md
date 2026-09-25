@@ -359,6 +359,36 @@ Private project data, generated runs, domain-specific corpora and adapters, and 
 
 ## Generation diagnostics
 
+`WORKER_OUTPUT_LIMITS` in the private settings file maps worker names to positive integer
+output-token allowances, shared by coding-worker chat and tool jobs. For example,
+`WORKER_OUTPUT_LIMITS = {"my-worker": 4096}`. Values are operator-pinned; omitted workers
+retain the existing defaults. Architect auto-adjustment is not implemented. This is not a
+server context or sampling setting. Select values that leave input/context headroom.
+
+The bundled tool runtime checks estimated input (including tools and arguments), output
+allowance and a 512-token reserve before generation. It preserves the checkpoint rather
+than silently trimming tool history. Estimates are not backend token counts. A length stop
+saves the returned fragment as unexecuted diagnostic evidence and permits one corrective
+continuation; a second length stop halts that attempt, including on resume. Content-filter
+stops are distinct and are not automatically retried within that attempt. Outer attempt
+budgets remain unchanged. External runtimes receive the output allowance but must implement
+their own recovery/context policy; these bundled behaviors are not claimed for them.
+
+Tool-mode delivery feedback requests tool inspection/checks and receipt-bound file mutations,
+not a fenced chat answer. The bundled service supports `files.append` and `files.edit` with
+`expected_sha256`; edit replaces exactly one nonempty `old_text` with `content`. Read returns
+the whole-file hash and supports one-based `start_line` and positive `max_lines`. Each mutation
+receipts the complete resulting bytes, so no final full-file rewrite is required. Run checks
+before finishing; any subsequent unreceipted change invalidates delivery.
+
+File changes are serialized per workspace, published atomically, and journaled before mutation.
+Retrying the same call ID reconciles an interrupted write/append/edit instead of duplicating it.
+Reusing an ID with different arguments is rejected. Old cached receipts lacking request identity
+require explicit reconciliation rather than guessed replay. Service receipt files are excluded
+from file listings and direct file-tool access; `python_run` is still trusted host execution,
+not a hostile-code sandbox. External services must advertise incremental actions before use.
+Reference-aware scratch cleanup and active-context compaction remain #30 work.
+
 Diagnostic support (#27): chat telemetry includes `generation` with the actual requested
 output limit, provider finish reason and usage when supplied. Chat worker logs record it;
 the bundled tool loop saves per-call evidence in its checkpoint and reports it in its log.

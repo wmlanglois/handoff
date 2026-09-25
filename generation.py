@@ -1,6 +1,22 @@
 """Allowlisted generation diagnostics, not a copy of prompts or server responses."""
 
 
+def worker_output_limit(worker, fallback):
+    """Operator-owned output allowance, shared by worker chat and tool execution.
+
+    No model or architect may change this setting through a packet. An absent profile
+    retains the existing limit; a configured value is a pinned value, not permission to tune.
+    """
+    from fleet import setting
+    profiles = setting("WORKER_OUTPUT_LIMITS", {})
+    if not isinstance(profiles, dict):
+        raise ValueError("WORKER_OUTPUT_LIMITS must be a mapping of worker names to token limits")
+    value = profiles.get(worker, fallback)
+    if type(value) is not int or value <= 0:
+        raise ValueError("worker output limit must be a positive integer: " + str(worker))
+    return value
+
+
 def response_evidence(response, request):
     choice = (response.get("choices") or [{}])[0]
     message = choice.get("message") or {}

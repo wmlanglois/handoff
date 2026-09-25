@@ -1531,8 +1531,16 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
             # A blank file, a missing fence, or a tool-limit is not a wrong answer. Do not ask the
             # worker to satisfy an assertion about content that was never written.
             note = "(delivery failure; skeptic not asked)"
-            ruling = ("REDO -- no deliverable was written ({0}). Return the complete file in one "
-                      "fenced block. Narration is not the file.").format(delivery)
+            instruction = (
+                "Inspect the existing workspace with your tools, preserve completed work, "
+                "correct the delivery problem and run the relevant checks. Final delivery "
+                "requires a successful receipted files mutation for the artifact; narration is not delivery. "
+                "Use guarded edit/append only if advertised by the service. "
+                "If supported operations cannot fit in a complete tool call, report the output-capacity "
+                "blocker rather than repeating the same oversized call."
+                if card.get("tools") else
+                "Return the complete file in one fenced block. Narration is not the file.")
+            ruling = "REDO -- no deliverable was written ({0}). {1}".format(delivery, instruction)
             reason = "delivery failure: " + str(delivery)
         elif oracle_ok:
             note = hooks.skeptic(rnd, output, review_root)
@@ -1907,6 +1915,8 @@ def main():
         print("FLEET_OUTCOME=worker-unavailable")
         sys.exit(EXIT_CODES["worker-unavailable"])
     name = card["name"]; worker = card["worker"]; brief = card["brief"]
+    from generation import worker_output_limit
+    worker_max_tokens = worker_output_limit(worker, _LOOP.worker_max_tokens)
     carry_context = chat_carry_context(card)
     brief += carry_context
     # precedence: explicit CLI flag > card field > default 'conversation' (keep the model's context
@@ -2110,7 +2120,7 @@ def main():
             else:
                 convo.append({"role": "user", "content": "Your previous attempt was REJECTED. Fix exactly "
                               f"this, keeping everything already correct unchanged:\n{guidance}"})
-            msg, _ti = chat(worker, convo, max_tokens=_LOOP.worker_max_tokens, timeout=200,
+            msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200,
                             preserve_first_user=bool(carry_context))
             output = _take(msg, _ti, rnd)
             convo.append({"role": "assistant", "content": output})
@@ -2119,7 +2129,7 @@ def main():
             review_root = str(ws)
             emit("convo", round=rnd, turns=len(convo), ctx_chars=sum(len(m["content"]) for m in convo))
         else:  # rewrite: a fresh unanchored swing each round, blind to the prior draft
-            msg, _ti = chat(worker, [{"role": "user", "content": base + reject_tail}], max_tokens=_LOOP.worker_max_tokens, timeout=200)
+            msg, _ti = chat(worker, [{"role": "user", "content": base + reject_tail}], max_tokens=worker_max_tokens, timeout=200)
             output = _take(msg, _ti, rnd)
             output = _keep_artifact(ws, output, _prior_artifact(ws),
                                     artifact=card.get("artifact") or "output.md", rnd=rnd)
@@ -2150,7 +2160,7 @@ def main():
                               "one. Where a question reveals a real problem, fix it; where it does not, "
                               "keep your answer and briefly say why it holds. Return the COMPLETE answer "
                               "in the required format, not just replies to the questions."})
-                msg, _ti = chat(worker, convo, max_tokens=_LOOP.worker_max_tokens, timeout=200,
+                msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200,
                                 preserve_first_user=bool(carry_context))
                 revised = _take(msg, _ti, rnd)
                 convo.append({"role": "assistant", "content": revised})

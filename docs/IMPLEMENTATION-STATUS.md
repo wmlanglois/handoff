@@ -58,6 +58,20 @@ This reconciliation does not re-verify every external paper, vendor claim, or re
 
 ## Updating the record
 
+Pending local follow-up: operator-pinned `WORKER_OUTPUT_LIMITS` is shared by coding-worker
+chat and tool jobs; tool-mode delivery feedback no longer requests fences. The bundled
+tool loop preserves incomplete returned replies as unexecuted evidence, bounds length-stop
+recovery, and checks estimated context before generation. This is partial #25/#27/#30 work,
+not automatic architect tuning, incremental submission, or scratch garbage collection.
+No active run or private server settings were changed.
+
+Additional local #30 work: guarded append/edit, ranged reads, per-workspace mutation serialization,
+request-identity checks and crash-reconciled file journals. Receipt resolution accepts validated
+incremental mutation receipts matching current artifact bytes; final full-file retransmission
+is unnecessary. Private tests exercise the real tool loop/service with scripted model replies,
+seal exact resulting bytes, reject tampering/stale edits and interrupt an append before receipt
+publication. Retention/cleanup and prompt compaction are not implemented by this patch.
+
 September 25 environment follow-up:
 
 - [Technical environment guide](ENVIRONMENT-REQUIREMENTS.md) is linked before first-use

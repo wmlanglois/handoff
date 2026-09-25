@@ -17,10 +17,16 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
+for _p in (str(ROOT), str(ROOT / "run")):   # state_lock lives in run/; the service runs standalone
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+from state_lock import exclusive_file
 TOOLS = [
-    {"type": "function", "function": {"name": "files", "description": "List, read or write files in this job workspace.",
-     "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["list", "read", "write"]},
-         "path": {"type": "string"}, "content": {"type": "string"}}, "required": ["action"]}}},
+    {"type": "function", "function": {"name": "files", "description": "Read or change workspace files. For large files write a small first section, then append or edit with expected_sha256 from the last result. Edit replaces exactly one nonempty old_text. Each mutation receipts the complete resulting file; no final full rewrite is needed. Read supports start_line and max_lines.",
+     "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["list", "read", "write", "edit", "append"]},
+         "path": {"type": "string"}, "content": {"type": "string"},
+         "old_text": {"type": "string"}, "expected_sha256": {"type": "string"},
+         "start_line": {"type": "integer"}, "max_lines": {"type": "integer"}}, "required": ["action"]}}},
     {"type": "function", "function": {"name": "python_run", "description": "Run Python code in this job workspace.",
      "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}},
 ]
@@ -41,7 +47,52 @@ def _path(ws, name):
     p = (ws / name).resolve()
     if not p.is_relative_to(ws) or p == ws:
         raise ValueError("path escapes the job workspace")
+    if p.relative_to(ws).parts[0] == ".receipts":
+        raise ValueError("service receipt storage is private")
     return p
+
+
+def _atomic_bytes(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Short, target-independent temp name: receipt names are already ~75 chars, and repeating them
+    # here pushed deep Windows checkouts past MAX_PATH (260), so every tool write failed there.
+    tmp = path.with_name('.' + secrets.token_hex(8) + '.tmp')
+    try:
+        with tmp.open('xb') as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _file_change(ws, args):
+    p = _path(ws, args.get('path'))
+    before = p.read_bytes() if p.exists() else None
+    before_sha = hashlib.sha256(before).hexdigest() if before is not None else None
+    content = args.get('content')
+    if not isinstance(content, str):
+        raise ValueError('content must be text')
+    action = args['action']
+    if action in ('append', 'edit'):
+        if before is None or not args.get('expected_sha256') or args['expected_sha256'] != before_sha:
+            raise ValueError('stale or missing expected_sha256; read current file before editing')
+        text = before.decode('utf-8')
+        if action == 'append':
+            data = (text + content).encode('utf-8')
+        else:
+            old = args.get('old_text')
+            if not isinstance(old, str) or not old or text.count(old) != 1:
+                raise ValueError('edit requires exactly one nonempty old_text match')
+            data = text.replace(old, content, 1).encode('utf-8')
+        if data == before:
+            raise ValueError('edit must change the file')
+    else:
+        data = content.encode('utf-8')
+    result = {'path': args['path'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+              'before_sha256': before_sha, 'operation': action}
+    return p, data, result
 
 
 def execute(root, job_id, name, args):
@@ -53,18 +104,22 @@ def execute(root, job_id, name, args):
             if not base.is_dir():
                 raise ValueError("not a directory")
             return {"files": sorted(str(p.relative_to(ws)).replace("\\", "/") for p in base.rglob("*")
-                                    if p.is_file() and not p.is_symlink())[:1000]}
+                                    if p.is_file() and not p.is_symlink()
+                                    and '.receipts' not in p.relative_to(ws).parts)[:1000]}
         p = _path(ws, args.get("path"))
         if action == "read":
-            return {"path": args["path"], "content": p.read_text(encoding="utf-8")}
-        if action == "write":
-            content = args.get("content")
-            if not isinstance(content, str):
-                raise ValueError("content must be text")
-            data = content.encode("utf-8")
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(data)
-            return {"path": args["path"], "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            raw = p.read_bytes()
+            text = raw.decode('utf-8')
+            start, count = args.get('start_line', 1), args.get('max_lines')
+            if type(start) is not int or start < 1 or (count is not None and (type(count) is not int or count < 1)):
+                raise ValueError('line ranges must be positive integers')
+            lines = text.splitlines(keepends=True)
+            return {"path": args["path"], "content": ''.join(lines[start-1:None if count is None else start-1+count]),
+                    'sha256': hashlib.sha256(raw).hexdigest(), 'total_lines': len(lines), 'start_line': start}
+        if action in ("write", "append", "edit"):
+            p, data, result = _file_change(ws, args)
+            _atomic_bytes(p, data)
+            return result
         raise ValueError("unknown files action")
     if name == "_upload":
         p = _path(ws, args.get("path"))
@@ -93,12 +148,41 @@ def call(root, payload):
         raise ValueError("invalid call_id")
     receipts = ws / ".receipts"
     receipts.mkdir(exist_ok=True)
+    with exclusive_file(receipts / '.call-lock', timeout=180):
+        return _locked_call(root, payload, ws, receipts, call_id)
+
+
+def _locked_call(root, payload, ws, receipts, call_id):
+    fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     receipt = receipts / (call_id + ".json")
+    identity = receipts / (call_id + '.request')
+    if identity.exists() and identity.read_text() != fingerprint:
+        raise ValueError('call_id reused with a different payload')
     if receipt.exists():
+        if not identity.exists():
+            raise ValueError('legacy receipt has no request identity; explicit reconciliation required')
         return json.loads(receipt.read_text(encoding="utf-8"))
+    _atomic_bytes(identity, fingerprint.encode())
+    intent = receipts / (call_id + '.intent')
     try:
-        result = {"ok": True, "result": execute(root, payload["job_id"], payload.get("name"),
-                                                payload.get("arguments") or {})}
+        args = payload.get('arguments') or {}
+        if payload.get('name') == 'files' and args.get('action') in ('write', 'append', 'edit'):
+            if intent.exists():
+                saved = json.loads(intent.read_text(encoding='utf-8'))
+                p = _path(ws, args.get('path'))
+                data = base64.b64decode(saved['data'], validate=True)
+                info = saved['result']
+                current = hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
+                if current not in (info['before_sha256'], info['sha256']):
+                    raise ValueError('interrupted edit conflicts with current file; manual reconciliation required')
+            else:
+                p, data, info = _file_change(ws, args)
+                _atomic_bytes(intent, json.dumps({'data': base64.b64encode(data).decode(),
+                                                 'result': info}).encode())
+            _atomic_bytes(p, data)
+            result = {'ok': True, 'result': info}
+        else:
+            result = {"ok": True, "result": execute(root, payload["job_id"], payload.get("name"), args)}
     except Exception as exc:
         result = {"ok": False, "error": str(exc)[:500]}
     tmp = receipts / (call_id + ".tmp")
@@ -107,6 +191,7 @@ def call(root, payload):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, receipt)
+    intent.unlink(missing_ok=True)
     return result
 
 

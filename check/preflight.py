@@ -68,7 +68,7 @@ def probe_worker(name, w, canary_timeout, emit):
         emit("locked", worker=name, canary_timeout_s=canary_timeout, error=repr(e))
         return row
     # 3. tool-call capability (cluster + spark)
-    if name in (DEFAULT_WORKER, SKEPTIC_WORKER):
+    if w.get("_require_toolcall", name in (DEFAULT_WORKER, SKEPTIC_WORKER)):
         try:
             tool = [{"type": "function", "function": {"name": "ping", "description": "return ok",
                      "parameters": {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}}}]
@@ -105,7 +105,7 @@ def probe_tool_service(emit):
         emit("tool-service-down", url=TOOL_SERVICE["url"], error=repr(e))
         return {"tool_service": "down"}
 
-def gate(worker_names, canary_timeout=25, emit=None):
+def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True):
     """Non-exiting preflight for one run. Returns (ok, reason, rows).
 
     Probes the run's coding lanes AND the skeptic (run_goal's own health check covers only
@@ -117,7 +117,11 @@ def gate(worker_names, canary_timeout=25, emit=None):
     Skeptic policy (README: the skeptic is optional): a NAMED skeptic that is missing or broken
     fails the gate like any lane. An EMPTY SKEPTIC_WORKER is an explicit opt-out: it passes, but a
     `not-configured` skeptic row is returned so the caller can say the run has no independent
-    review -- it is never silently omitted."""
+    review -- it is never silently omitted.
+
+    The tool-service is probed only when the run needs it (`need_tool_service`: some assignment
+    has tools:true). A plan of chat-only packets does not require it, and must not be forced to
+    --skip-preflight -- which would also skip the lane and skeptic checks -- just to run."""
     if emit is None:
         emit = lambda *a, **k: None  # noqa: E731
     names = [n for n in (worker_names or []) if n]
@@ -135,15 +139,19 @@ def gate(worker_names, canary_timeout=25, emit=None):
             rows.append({"worker": n, "verdict": "unconfigured"})
             reasons.append("{0}: not in the fleet config".format(n))
             continue
-        r = probe_worker(n, w, canary_timeout, emit)
+        required_tools = (need_tool_service and n in (worker_names or [])) or n == SKEPTIC_WORKER
+        r = probe_worker(n, dict(w, _require_toolcall=required_tools), canary_timeout, emit)
         rows.append(r)
         if r.get("verdict") != "ok":
             reasons.append("{0}: {1}".format(n, r.get("verdict")))
     if not SKEPTIC_WORKER:
         rows.append({"worker": "(skeptic)", "role": "skeptic", "verdict": "not-configured"})
-    ts = probe_tool_service(emit)
-    if ts["tool_service"] not in ("ok",):
-        reasons.append("tool-service: {0}".format(ts["tool_service"]))
+    if need_tool_service:
+        ts = probe_tool_service(emit)
+        if ts["tool_service"] not in ("ok",):
+            reasons.append("tool-service: {0}".format(ts["tool_service"]))
+    else:
+        rows.append({"worker": "(tool-service)", "role": "tool-service", "verdict": "not-needed"})
     return (not reasons), "; ".join(reasons), rows
 
 

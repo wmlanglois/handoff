@@ -14,7 +14,8 @@ Reconciled September 25, 2026 against runtime commit [`221f434`](https://github.
 | Delegated map resume | An existing proposal no longer skips the approval step. While no approved map exists, derive from the current approved plan; failed derivation stops. The downstream map validity gate still applies. | [#7](https://github.com/wmlanglois/handoff/issues/7) |
 | Registry configuration | Sample has the version/workers envelope and non-reserved names; `FLEET_REGISTRY` permits explicit project-local storage. | [#15](https://github.com/wmlanglois/handoff/issues/15) |
 | Returning workers | `connect` checks saved endpoints; failed or unchecked saved entries do not count as ready. | [#16](https://github.com/wmlanglois/handoff/issues/16), duplicate [#17](https://github.com/wmlanglois/handoff/issues/17) |
-| Preflight | Autonomous checks selected lanes, named skeptic, and tool service before execution; an empty skeptic produces an explicit warning. | [#12](https://github.com/wmlanglois/handoff/issues/12) |
+| Preflight | Autonomous checks selected lanes and named skeptic; tools additionally require lane tool-call capability and the service. An empty skeptic warns. | [#12](https://github.com/wmlanglois/handoff/issues/12), [#22](https://github.com/wmlanglois/handoff/issues/22) |
+| Worker tool policy | Explicit `--tool-mode chat-only\|tools` persists through planning, repairs, follow-ons, cards and resume; approved work cannot be silently toggled. | [#22](https://github.com/wmlanglois/handoff/issues/22) |
 | Oracle filter | Static AST-based analysis replaces the regex false positive on expressions such as `value == 42 or 1 == 2`. It does not certify full behavioral coverage. | [#18](https://github.com/wmlanglois/handoff/issues/18) |
 
 Issue #18's historical wording conflates existence/shape checks with tautologies. Such checks can fail and may be appropriate to a contract; they are not evidence of all application behavior. Mechanical checks, skeptical questions, acceptance receipts, and integration journeys have different roles.
@@ -36,7 +37,7 @@ These open issues preserve the distinction between a missing software connection
 
 [#14](https://github.com/wmlanglois/handoff/issues/14) remains closed with a coverage clarification. Existing mechanisms include request socket timeouts, the queue subprocess timeout, generation-based health checks, and authorized worker recovery. The added generated-token progress watchdog is on the prefill-lock streaming path, not every transport. No claim here establishes every end-to-end stall/retry scenario. Client timeout does not prove remote execution stopped.
 
-The default autonomous preflight still checks the tool service even for non-tool plans. Its bypass skips all preflight. A configured endpoint, a green port check, or a copied sample does not establish working generation or correct role assignment.
+The #22 patch makes unused-service handling explicit: chat-only plans report `not-needed` without probing the service, while lane/skeptic checks remain. Its bypass still skips all preflight. A configured endpoint, a green port check, or a copied sample does not establish working generation or correct role assignment. Tool policy is authorization, not capability proof or measured quality benefit. Offline regression checks exercise policy propagation, denial, service failure, and actual local tool self-check/write-receipt binding; no live model comparison is claimed.
 
 Local regression evidence is distinct from public CI and live deployment evidence. This publication intentionally excludes private tests, fixtures, run logs, machine configuration, and CI workflows. Issue closure is not itself test evidence.
 

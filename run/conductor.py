@@ -214,7 +214,11 @@ def plan_with_recovery(goal_id, goal_text, criteria, *, rounds=2, planner=None, 
         if not uncovered:
             break
         try:
-            contracts = planner(goal_text, criteria, feedback=feedback)
+            import toolpolicy
+            tool_mode = goals.state(goal_id, root=root).get("tool_mode")
+            contracts = planner(goal_text, criteria,
+                                feedback=feedback + "\n" + toolpolicy.instruction(tool_mode))
+            contracts = [toolpolicy.apply(c, tool_mode) for c in contracts]
         except Exception as e:
             findings.append({"round": r, "error": repr(e)})
             break
@@ -339,6 +343,8 @@ def propose_plan(goal_id, contracts, *, root=None, echo=print):
     silently dropped. That is also why the check runs here and not inside the worker -- it grades
     the MANAGER, and nothing else in this repo does."""
     st = goals.state(goal_id, root)
+    import toolpolicy
+    contracts = [toolpolicy.apply(c, st.get("tool_mode")) for c in contracts]
     ok, bad = planning.gate(contracts, criteria=st["criteria"], root=ROOT, project_root=(st.get("project_root")), integration_check=(st.get("integration") or {}).get("check_source") or None)
     for c, rev in bad:
         echo(f"  REJECTED {c.get('name')}: {rev.why()}")
@@ -461,6 +467,8 @@ def _cmd_plan(a):
                        budget={"assignments": a.budget} if a.budget else None,
                        project_root=getattr(a, "project_root", None),
                        integration=integ)
+    if getattr(a, "tool_mode", None):
+        goals.set_tool_mode(gid, a.tool_mode)
     print(f"goal {gid}")
     if a.plan_file:
         contracts = planning.parse_plan(Path(a.plan_file).read_text(encoding="utf-8"))
@@ -817,6 +825,7 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True, plan_file
     import projectpkg
     import intake
     import proofloop
+    _bind_tool_mode(package, gid)
     st = projectpkg.intake_state(package, name)
     criteria = projectpkg.criteria_from_intake(st)
     limits = projectpkg.limits_from_intake(st)
@@ -938,6 +947,8 @@ def _resume(package, *, allow_draft=False):
     import intake
     package = Path(package)
     doc = projectpkg.load_project(package)
+    if doc.get("tool_mode_required") and not doc.get("tool_mode"):
+        raise SystemExit("select --tool-mode chat-only or tools with start before continuing")
     name = doc["name"]
     root = doc["project_root"]
     observed = package / "observed.md"
@@ -1094,6 +1105,31 @@ def _cmd_assist_run(package, name, drafts_path=None):
         print("  python run/conductor.py confirm {0} {1} --as <you>".format(package, qid))
 
 
+def _select_tool_mode(package, mode=None, *, allow_unselected=False):
+    import projectpkg
+    import toolpolicy
+    doc = projectpkg.load_project(package)
+    selected = mode or doc.get("tool_mode")
+    if selected is None and doc.get("tool_mode_required") and not allow_unselected:
+        raise SystemExit("select --tool-mode chat-only or tools before planning")
+    if selected is not None:
+        toolpolicy.validate(selected)
+        if doc.get("goal_id"):
+            goals.set_tool_mode(doc["goal_id"], selected)
+        if doc.get("tool_mode") != selected:
+            doc["tool_mode"] = selected
+            projectpkg.save_project(package, doc)
+    print(toolpolicy.instruction(selected))
+    return selected
+
+
+def _bind_tool_mode(package, gid):
+    import projectpkg
+    mode = projectpkg.load_project(package).get("tool_mode")
+    if mode is not None:
+        goals.set_tool_mode(gid, mode)
+
+
 def _cmd_start(a):
     import projectpkg
     if not a.name or any(s in a.name for s in ("/", "\\")) or a.name in (".", ".."):
@@ -1122,6 +1158,10 @@ def _cmd_start(a):
         raise SystemExit(2)
     if a.draft and mode == "defer":
         raise SystemExit("--draft cannot be used with --intake-mode defer")
+    if (mode != "defer" and not getattr(a, "tool_mode", None) and not prior.get("tool_mode")
+            and (not existing or prior.get("intake_mode") == "defer")):
+        raise SystemExit("choose --tool-mode chat-only or tools before planning. tools authorizes "
+                         "workspace code execution on the configured tool-service host; chat-only does not.")
     if mode == "brief" and not (a.brief or (package / "brief.md").is_file()):
         raise SystemExit("--intake-mode brief requires --brief FILE (or an existing package brief.md)")
     if a.brief and mode != "brief":
@@ -1143,6 +1183,11 @@ def _cmd_start(a):
             raise SystemExit("git init failed: {0}".format((init.stderr or init.stdout)[:500]))
         print("initialized local Git repository; no remote was created and nothing was pushed")
     projectpkg.ensure(package, folder, a.name)
+    if not existing:
+        doc = projectpkg.load_project(package)
+        doc["tool_mode_required"] = True
+        projectpkg.save_project(package, doc)
+    _select_tool_mode(package, getattr(a, "tool_mode", None), allow_unselected=mode == "defer")
     projectpkg.set_first_use(package, project_kind=kind, intake_mode=mode)
     if a.brief:
         target = projectpkg.import_brief(package, Path(a.brief))
@@ -1187,7 +1232,9 @@ def _cmd_autonomous(a):
     import orchestrate
     import projectpkg
     package = Path(a.package).resolve()
+    _select_tool_mode(package)
     delegate = (getattr(a, "delegate", "") or "").strip() or None
+    _select_tool_mode(package, getattr(a, "tool_mode", None))
     # SCOPE gate (issue #13): scope is the one gate --delegate did not cover, so a "paste once
     # and walk away" run always stopped here for a human. A standing --delegate is the human's
     # up-front approval of the exact scoped.md bytes, exactly like the plan and map gates below;
@@ -1196,6 +1243,7 @@ def _cmd_autonomous(a):
         projectpkg.approve_scope(package, delegate, note="standing --delegate (unattended run)")
         print("scoped.md AUTO-APPROVED by standing delegate {0}.".format(delegate))
     gid = autonomous_launch(package, decisions=a.decisions, seconds=a.seconds)
+    _bind_tool_mode(package, gid)
     if a.map:
         if not (a.approver or "").strip():
             raise SystemExit("a map approval needs --as <you>")
@@ -1268,7 +1316,10 @@ def _cmd_autonomous(a):
     # existing check/preflight probes; --skip-preflight (or HANDOFF_SKIP_PREFLIGHT) bypasses it.
     if not (getattr(a, "skip_preflight", False) or os.environ.get("HANDOFF_SKIP_PREFLIGHT")):
         import preflight
-        ok, reason, pf_rows = preflight.gate(workers)
+        need_tools = any((rec.get("contract") or {}).get("tools")
+                         for rec in (goals.state(gid).get("assignments") or {}).values())
+        ok, reason, pf_rows = preflight.gate(workers, need_tool_service=need_tools)
+        print("tool service: required" if need_tools else "tool service: not-needed (not probed)")
         if not ok:
             print("PREFLIGHT FAILED: " + reason)
             print("  fix the fleet, or re-run with --skip-preflight to bypass.")
@@ -1607,7 +1658,7 @@ def build_repair_contract(goal_id, *, owner, spec, note, journey, blobs, candida
         "integrator": "handoff",
         "oracle": oracle,
         "oracle_covers_done_when": True,
-        "tools": False,
+        "tools": doc.get("tool_mode") == "tools",
         "artifact": owner,
         "dest": owner,
         "consumer": "the approved launch command",
@@ -1638,7 +1689,7 @@ def queue_follow_up(goal_id, *, owner, evidence, source):
         "integrator": "handoff",
         "oracle": "import pathlib\ntext = pathlib.Path({0!r}).read_text(encoding='utf-8')\nassert text.strip()\n".format(owner),
         "oracle_covers_done_when": False,
-        "tools": False,
+        "tools": goals.state(goal_id).get("tool_mode") == "tools",
         "artifact": owner,
         "dest": owner,
         "consumer": "launch.py",
@@ -1860,6 +1911,8 @@ def main(argv=None):
                    help="explicit first-use choice; omit on an existing package to keep its saved mode")
     p.add_argument("--brief", default=None, help="UTF-8 existing brief, stored as unconfirmed context")
     p.add_argument("--draft", action="store_true", help="allow one model call for proposed intake drafts")
+    p.add_argument("--tool-mode", choices=("chat-only", "tools"), default=None,
+                   help="persist worker execution authority; tools enables workspace code execution")
     p.set_defaults(fn=_cmd_start)
 
     p = sub.add_parser("continue", help="resume an existing package at the first incomplete step")
@@ -1888,6 +1941,8 @@ def main(argv=None):
     p.set_defaults(fn=_cmd_approve_scope)
 
     p = sub.add_parser("plan", help="open a goal and propose a plan for approval")
+    p.add_argument("--tool-mode", choices=("chat-only", "tools"), default=None,
+                   help="execution authority for new contracts; omission preserves legacy behavior")
     p.add_argument("goal")
     p.add_argument("--criterion", action="append", required=True,
                    help="an acceptance criterion; repeat. These are what completion MEANS.")
@@ -1901,6 +1956,8 @@ def main(argv=None):
     p.set_defaults(fn=_cmd_plan)
 
     p = sub.add_parser("autonomous", help="bind scoped.md and run the autonomous loop under the recorded budgets")
+    p.add_argument("--tool-mode", choices=("chat-only", "tools"), default=None,
+                   help="select before planning, then retain the saved policy; cannot alter approved work")
     p.add_argument("package")
     p.add_argument("--decisions", type=int, required=True)
     p.add_argument("--seconds", type=int, required=True)

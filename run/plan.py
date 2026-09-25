@@ -590,7 +590,10 @@ launcher, and the test suite): an outcome that lands a project file with any oth
 rejected before dispatch. Write the oracle to import it from the workspace --
 start it with `import sys, os; sys.path.insert(0, os.getcwd())` -- never from an absolute path. Put any
 project modules the deliverable must call in "sources" so their real API can be handed to the
-worker. Prefer "tools": false unless the work genuinely needs to run or read files. When the
+worker. Follow the operator tool-mode instruction supplied in planning feedback. Never infer tool
+authority from autonomy, review cadence, or registered endpoints. In tools mode coding packets
+should inspect staged interfaces and run bounded self-checks. In chat-only mode use tools:false
+and provide sufficient public interface context. When the
 oracle mechanically checks every done_when clause, set "oracle_covers_done_when": true; otherwise
 every clause is prose and the result waits for a person (awaiting-review) even after the oracle
 passes.

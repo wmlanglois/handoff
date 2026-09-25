@@ -242,9 +242,20 @@ def _post_stream_with_prefill_lock(url, body, worker, timeout):
     # allowed to treat it as stale.
     abandoned = False
     role = "assistant"; content = []; tcs = {}
+    # PROGRESS WATCHDOG (issue #14): the socket timeout is per-READ, so a server that trickles
+    # keepalives/empty chunks keeps resetting it and never trips the wall -- the stream hangs while
+    # making no real progress. Bound the time since the last GENERATED token (keepalives and the
+    # role-only preamble do NOT count): if nothing is generated for `timeout` seconds, give up. The
+    # raised TimeoutError is treated exactly like a socket timeout below (the prefill lock is kept,
+    # not handed away mid-prefill).
+    last_progress = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             for raw in r:
+                if time.monotonic() - last_progress > timeout:
+                    raise TimeoutError(
+                        "{0}: no generated token in {1}s (stream made no progress; "
+                        "likely keepalive trickle)".format(worker, timeout))
                 line = raw.decode("utf-8", "replace").strip()
                 if not line.startswith("data:"):
                     continue
@@ -260,8 +271,11 @@ def _post_stream_with_prefill_lock(url, body, worker, timeout):
                 # proof of generation: servers emit a role-only preamble and keepalives before the
                 # first token, and releasing on those hands the lock away mid-prefill. This server
                 # streams its thinking in `reasoning`, so that counts as generation too.
-                if not released and (delta.get("content") or delta.get("reasoning")
-                                     or delta.get("tool_calls")):
+                generated = bool(delta.get("content") or delta.get("reasoning")
+                                 or delta.get("tool_calls"))
+                if generated:
+                    last_progress = time.monotonic()  # real token -> the stream is making progress
+                if not released and generated:
                     jobs.release_lock(lock)
                     released = True
                 if delta.get("role"):

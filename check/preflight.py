@@ -105,6 +105,41 @@ def probe_tool_service(emit):
         emit("tool-service-down", url=TOOL_SERVICE["url"], error=repr(e))
         return {"tool_service": "down"}
 
+def gate(worker_names, canary_timeout=25, emit=None):
+    """Non-exiting preflight for one run. Returns (ok, reason, rows).
+
+    Probes the run's coding lanes AND the skeptic (run_goal's own health check covers only
+    coding lanes, so a dead/missing skeptic would otherwise pass) plus the tool-service. `reason`
+    names every concrete failure -- which lane and its verdict (unreachable/locked/empty/
+    no-toolcall/unconfigured), a missing skeptic, or a down tool-service -- so a run refuses up
+    front with a specific cause instead of dying at dispatch. A reachable port is not health."""
+    if emit is None:
+        emit = lambda *a, **k: None  # noqa: E731
+    names = [n for n in (worker_names or []) if n]
+    if SKEPTIC_WORKER:
+        names.append(SKEPTIC_WORKER)
+    seen, probe_names = set(), []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            probe_names.append(n)
+    rows, reasons = [], []
+    for n in probe_names:
+        w = WORKERS.get(n)
+        if not w:
+            rows.append({"worker": n, "verdict": "unconfigured"})
+            reasons.append("{0}: not in the fleet config".format(n))
+            continue
+        r = probe_worker(n, w, canary_timeout, emit)
+        rows.append(r)
+        if r.get("verdict") != "ok":
+            reasons.append("{0}: {1}".format(n, r.get("verdict")))
+    ts = probe_tool_service(emit)
+    if ts["tool_service"] not in ("ok",):
+        reasons.append("tool-service: {0}".format(ts["tool_service"]))
+    return (not reasons), "; ".join(reasons), rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--canary-timeout", type=int, default=25)

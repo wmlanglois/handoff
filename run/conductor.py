@@ -1253,6 +1253,18 @@ def _cmd_autonomous(a):
                     print("then re-run the same autonomous command to launch under the recorded budget.")
                     return {"stop": "AWAITING_MAP_APPROVAL", "goal_id": gid, "proposed_map": spec}
     workers = [w.strip() for w in (a.workers or DEFAULT_WORKER).split(",") if w.strip()]
+    # PREFLIGHT gate (issue #12): a configured URL, or a /health 200, is not proof a model
+    # generates. Verify the run's coding lanes AND the skeptic AND the tool-service before
+    # committing to a run, and refuse with the specific cause -- instead of discovering a dead
+    # or locked lane (or a missing skeptic) partway through an unattended run. Reuses the
+    # existing check/preflight probes; --skip-preflight (or HANDOFF_SKIP_PREFLIGHT) bypasses it.
+    if not (getattr(a, "skip_preflight", False) or os.environ.get("HANDOFF_SKIP_PREFLIGHT")):
+        import preflight
+        ok, reason, _rows = preflight.gate(workers)
+        if not ok:
+            print("PREFLIGHT FAILED: " + reason)
+            print("  fix the fleet, or re-run with --skip-preflight to bypass.")
+            return {"stop": "PREFLIGHT_FAILED", "reason": reason}
     summary = orchestrate.run_goal(gid, workers, max_seconds=int(a.seconds),
                                    max_decisions=int(a.decisions))
     print("STOP: {0} -- {1}".format(summary["stop"], summary.get("reason")))
@@ -1887,8 +1899,11 @@ def main(argv=None):
                    help="propose this pre-written plan (JSON with an 'outcomes' list) instead of "
                         "calling the model planner; it is still gated, human-approved and mapped.")
     p.add_argument("--delegate", default=None, metavar="NAME",
-                   help="run unattended (overnight): pre-approve the plan and derived map as NAME's "
-                        "standing approval. Budget, never-rules and consequential sign-offs still apply.")
+                   help="run unattended (overnight): pre-approve the scope, plan and derived map as "
+                        "NAME's standing approval. Budget, never-rules and consequential sign-offs still apply.")
+    p.add_argument("--skip-preflight", action="store_true",
+                   help="do not verify the fleet before dispatch (default: preflight the run's "
+                        "coding lanes, the skeptic and the tool-service, and refuse on failure).")
     p.add_argument("--as", dest="approver", default="")
     p.set_defaults(fn=_cmd_autonomous)
 

@@ -1,39 +1,40 @@
 {
   "_README": [
-    "Illustrative model registry for Handoff -- the SHAPE of the per-user worker registry.",
+    "Illustrative model registry for Handoff: the exact envelope the reader (fleet._read_registry) accepts.",
     "You normally do NOT hand-write this. Prefer:",
-    "    python run/registry.py connect          # find + register a local model server, re-check saved ones",
-    "    python run/registry.py add http://localhost:8080   # qualify + register one endpoint",
+    "    python run/registry.py connect                    # find + register a local model server, re-check saved ones",
+    "    python run/registry.py add http://localhost:8080  # qualify + register one endpoint",
     "Those write the real registry (with qualification metadata) to the per-user path:",
     "    Windows: %LOCALAPPDATA%/fleet/workers.json   Linux/mac: $XDG_STATE_HOME/fleet/workers.json",
     "That path is per-USER and shared across every clone/project, so a returning user reuses it.",
-    "For a PROJECT-LOCAL registry instead, set FLEET_REGISTRY=/path/to/this-project/workers.json",
-    "(highest precedence; both the reader and registry.py honour it). Copy this file there and edit.",
-    "Delete this _README key in a real file; each other top-level key is one worker NAME.",
+    "For a PROJECT-LOCAL registry instead, set FLEET_REGISTRY=/path/to/this-project/workers.json and copy this file there.",
+    "This _README key is ignored by the reader. 'version' must be 1; each key under 'workers' is one worker NAME.",
+    "Names defined in fleet.py (cluster, pairA, pairB, spark, vision) are reserved and would be ignored here.",
+    "Then select roles in fleet_settings.local.py, e.g. PRIMARY_WORKER = \"my-worker\" and SKEPTIC_WORKER = \"my-skeptic\".",
+    "A hand-written entry is not qualified: run `registry.py health <name>` (or `connect`) before dispatching to it.",
     "reasoning_style: none | template_kwargs | budget_field. Leave defaults unless you have measured otherwise."
   ],
-  "cluster": {
-    "url": "http://localhost:8080",
-    "model": "qwen2.5-coder-32b",
-    "kind": "openai",
-    "backend": null,
-    "ctx": 32768,
-    "max_inflight": 1,
-    "requires_prefill_lock": false,
-    "supports_gbnf": false,
-    "reasoning_style": "none",
-    "source": "registered"
-  },
-  "spark": {
-    "url": "http://localhost:1234",
-    "model": "a-small-fast-model-for-the-skeptic",
-    "kind": "openai",
-    "backend": null,
-    "ctx": 8192,
-    "max_inflight": 1,
-    "requires_prefill_lock": false,
-    "supports_gbnf": false,
-    "reasoning_style": "none",
-    "source": "registered"
+  "version": 1,
+  "workers": {
+    "my-worker": {
+      "url": "http://localhost:8080",
+      "model": "REPLACE_WITH_MODEL_ID",
+      "kind": "openai",
+      "ctx": 32768,
+      "max_inflight": 1,
+      "requires_prefill_lock": false,
+      "supports_gbnf": false,
+      "reasoning_style": "none"
+    },
+    "my-skeptic": {
+      "url": "http://localhost:1234",
+      "model": "REPLACE_WITH_SMALL_MODEL_ID",
+      "kind": "openai",
+      "ctx": 8192,
+      "max_inflight": 1,
+      "requires_prefill_lock": false,
+      "supports_gbnf": false,
+      "reasoning_style": "none"
+    }
   }
 }

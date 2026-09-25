@@ -374,6 +374,7 @@ def effective_cadence(letter: str, branch: str = "") -> str:
 
 
 def _executable_asserts(example: str) -> list:
+    import integrate
     out = []
     for ln in (example or "").splitlines():
         s = ln.strip()
@@ -381,6 +382,9 @@ def _executable_asserts(example: str) -> list:
             continue
         flat = re.sub(r"\s+", " ", s).lower().rstrip(";")
         if flat in {"assert true", "assert true == true", "assert 1", "assert 1 == 1", "assert 1==1"}:
+            continue
+        if not integrate.assert_can_fail(s):
+            # tautological by construction (e.g. `... or True`) -- looks like a check, verifies nothing.
             continue
         out.append(s)
     return out

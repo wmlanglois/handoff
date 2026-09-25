@@ -118,10 +118,26 @@ def lease_owner_stopped(cid):
     try:
         row = json.loads(_lease_path(cid).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
+        # No readable lease. The controller id itself is `host-pid-nonce` (see CONTROLLER), so the
+        # owner can still be proven stopped: same host and a provably gone pid. Without this, a
+        # controller that died before (or after losing) its lease file stranded its running jobs
+        # forever -- "cannot prove it stopped" -- observed live: a job held 4h by a dead pid.
+        host, pid = _cid_host_pid(cid)
+        if host != _HOST or pid is None:
+            return False
+        return _process_alive(pid) is False
     if row.get("host") != _HOST:
         return False
     return _process_alive(row.get("pid")) is False
+
+
+def _cid_host_pid(cid):
+    """(host, pid) from a controller id `host-pid-nonce`; (None, None) when it does not parse. The
+    host may itself contain dashes, so the pid and nonce are taken from the right."""
+    parts = str(cid or "").rsplit("-", 2)
+    if len(parts) != 3 or not parts[1].isdigit():
+        return None, None
+    return parts[0], int(parts[1])
 
 
 def lease_beat(cid):

@@ -41,6 +41,7 @@ sys.path.insert(0, str(ROOT / "run"))
 import goals  # noqa: E402
 import steer  # noqa: E402
 from fleet import SKEPTIC_WORKER  # noqa: E402
+from fleet import runs_root as fleet_runs_root  # noqa: E402  (one runs root for writer+readers)
 
 REPAIR, FOLLOWON, PARK, STOP = "REPAIR", "FOLLOWON", "PARK", "STOP"
 INVESTIGATE, REVISIT = "INVESTIGATE", "REVISIT"
@@ -280,7 +281,7 @@ def failure_text(name, limit=1400):
     loop gave up but not what went wrong. The assertion text lives in the emit log and is the only
     thing an architect can repair against, so it is dug out here. Without it a REPAIR is a guess
     wearing a decision's clothes."""
-    base = ROOT / "runs" / ("verified-" + name)
+    base = fleet_runs_root() / ("verified-" + name)
     try:
         rec = json.loads((base / "result.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -318,7 +319,7 @@ def failure_text(name, limit=1400):
     # name across the workspaces it can land in, and surface tool-limit / crash evidence too.
     artifact = ""
     try:
-        card = json.loads((ROOT / "runs" / "goal-cards" / (name + ".json")).read_text(encoding="utf-8"))
+        card = json.loads((fleet_runs_root() / "goal-cards" / (name + ".json")).read_text(encoding="utf-8"))
         artifact = (card.get("artifact") or card.get("dest") or "").replace("\\", "/")
     except (OSError, ValueError):
         card = {}
@@ -753,7 +754,7 @@ def _resolve_deliverable(rid, artifact):
     """(path, bytes) of the parked run's actual deliverable, or (None, None). Resolves the same way
     the architect-evidence path does: the recorded best_artifact, the run dir, and the tool
     workspace, by the artifact's package-relative name and its basename."""
-    base = ROOT / "runs" / ("verified-" + rid)
+    base = fleet_runs_root() / ("verified-" + rid)
     best = ""
     try:
         best = str(json.loads((base / "result.json").read_text(encoding="utf-8")).get("best_artifact") or "")
@@ -803,7 +804,7 @@ def carry_package(goal_id, name, orig, new_name, root=None):
     src, data = _resolve_deliverable(rid, artifact)
     inp = None
     if src is not None and data is not None:
-        snap_dir = ROOT / "runs" / "carry" / new_name
+        snap_dir = fleet_runs_root() / "carry" / new_name
         snap_dir.mkdir(parents=True, exist_ok=True)
         rel = Path(artifact).name
         snap = snap_dir / rel

@@ -44,6 +44,7 @@ import recovery                   # noqa: E402  health + authorized restart
 import queue as fleet_queue       # noqa: E402  Track A  (shadows stdlib queue; run/ is on sys.path)
 import watchdog                   # noqa: E402
 from fleet import DEFAULT_WORKER  # noqa: E402
+from fleet import runs_root as fleet_runs_root  # noqa: E402  (one runs root for writer+readers)
 
 DONE, BLOCKED, BUDGET = "DONE", "BLOCKED", "BUDGET"
 
@@ -53,8 +54,7 @@ TERMINAL_DIRS = ("done", "review", "parked", "failed")
 
 
 def _runs_root():
-    env = os.environ.get("FLEET_RUNS_DIR")
-    return Path(env) if env else (ROOT / "runs")
+    return fleet_runs_root()
 
 
 def _cards_dir(root=None):
@@ -218,7 +218,7 @@ def healthy_workers(workers, *, recover=True, notes=None, sleep=time.sleep):
 def _harvest_proposals(goal_id, display, run_id, evidence_ref):
     """Read the run's recorded proposals (verified.py extract_proposals) into the ledger."""
     try:
-        rec = json.loads((ROOT / "runs" / ("verified-" + run_id) / "result.json")
+        rec = json.loads((fleet_runs_root() / ("verified-" + run_id) / "result.json")
                          .read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
@@ -243,13 +243,13 @@ def _retain(name, card, outcome, criterion_id, goal_id):
     if outcome == "accepted":
         best = ""
         try:
-            rec = json.loads((ROOT / "runs" / ("verified-" + name) / "result.json")
+            rec = json.loads((fleet_runs_root() / ("verified-" + name) / "result.json")
                              .read_text(encoding="utf-8"))
             best = str(rec.get("best_artifact") or "")
         except (OSError, ValueError):
             pass
         art = card.get("artifact") or "output.md"
-        sk = memory.register_skill_from_run(name, str(ROOT / "runs" / ("verified-" + name) / art),
+        sk = memory.register_skill_from_run(name, str(fleet_runs_root() / ("verified-" + name) / art),
                                             card)
         if sk:
             made.append(sk["id"])
@@ -559,7 +559,7 @@ def _run_goal_impl(goal_id, workers, max_seconds=3600, max_rounds=4, poll_cards=
                         prop = next((p for p in delta.get("proposals") or []
                                      if p["id"] == dec.get("proposal_id")), None)
                         target = (prop or {}).get("from") or target
-                    art_root = (ROOT / "runs" / ("verified-" + goals.run_id(goal_id, target))
+                    art_root = (fleet_runs_root() / ("verified-" + goals.run_id(goal_id, target))
                                 if target else None)
                     if (dec.get("action") or "").upper() == decide.INVESTIGATE and deliverable_root:
                         # An INVESTIGATE is about the PROJECT root. Rooting the skeptic at the
@@ -804,7 +804,7 @@ def main():
             print("  - " + str(i))
     else:
         print("INTERVENTIONS: none")
-    out = ROOT / "runs" / ("goalrun-" + a.goal_id + ".json")
+    out = fleet_runs_root() / ("goalrun-" + a.goal_id + ".json")
     out.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     print("summary: " + str(out))
     return 0 if summary["stop"] == DONE else 1

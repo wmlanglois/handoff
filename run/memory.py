@@ -35,6 +35,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _runs_dir():
+    """The run-state root (FLEET_RUNS_DIR aware) -- the same one the verified writer uses."""
+    import fleet
+    return fleet.runs_root()
 STORE = Path(os.environ.get("FLEET_MEMORY_DIR") or (ROOT / "runs" / "memory"))
 LESSONS = "lessons.jsonl"
 SKILLS = "skills.jsonl"
@@ -272,7 +278,7 @@ def extract_lessons_from_run(run_name, family_tags=(), runs_root=None):
         and an explicit statement of what was NOT recorded or NOT accepted.
     A parked-unsupported run therefore never yields a row that speaks of an "accepted artifact",
     which is what the first extractor did (audit 2026-09-20)."""
-    base = Path(runs_root or (ROOT / "runs")) / ("verified-" + run_name)
+    base = Path(runs_root or _runs_dir()) / ("verified-" + run_name)
     if DISABLED:
         return []
     try:
@@ -774,7 +780,7 @@ def register_skill_from_run(run_name, deliverable_path, card, runs_root=None):
     artifact), hashes it, reads its real entry points and dependencies, and records the verified
     example calls from the oracle. It does NOT claim the module is on anyone's import path: the
     consumer stages the exact bytes into its own workspace (run/verified.py) and re-verifies."""
-    base = Path(runs_root or (ROOT / "runs")) / ("verified-" + run_name)
+    base = Path(runs_root or _runs_dir()) / ("verified-" + run_name)
     register_skill_from_run.last_reason = ""
     if DISABLED:
         register_skill_from_run.last_reason = "memory disabled"

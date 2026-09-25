@@ -42,6 +42,12 @@ from pathlib import Path
 from state_lock import exclusive_file
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _runs_dir():
+    """The run-state root (FLEET_RUNS_DIR aware) -- the same one the verified writer uses."""
+    import fleet
+    return fleet.runs_root()
 sys.path.insert(0, str(ROOT / "run"))      # so `plan` resolves however this module was imported
 
 # --- criterion status -----------------------------------------------------------------------
@@ -1018,7 +1024,7 @@ def alternatives(goal_id, criterion_id, root=None):
                     "run_id": a.get("run_id") or name,
                     "evidence": [o.get("evidence_ref") for o in a.get("outcomes") or []
                                  if o.get("evidence_ref")],
-                    "workspace": str(ROOT / "runs" / ("verified-" + (a.get("run_id") or name)))})
+                    "workspace": str(_runs_dir() / ("verified-" + (a.get("run_id") or name)))})
     return out
 
 

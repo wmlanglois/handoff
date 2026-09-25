@@ -100,8 +100,8 @@ class GoalError(Exception):
 def goals_dir(root=None):
     if root:
         return Path(root)
-    env = os.environ.get("FLEET_GOALS_DIR")
-    return Path(env) if env else ROOT / "runs" / "goals"
+    import fleet
+    return fleet.goals_dir()   # FLEET_GOALS_DIR, else <runs root>/goals
 
 
 def _path(goal_id, root=None):

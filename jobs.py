@@ -12,11 +12,22 @@ close, so it's hung" check, answerable instantly without pulling logs or rerunni
 import argparse, contextlib, sqlite3, time, uuid
 from pathlib import Path
 
-DB = Path(__file__).resolve().parent / "runs" / "jobs.sqlite3"
+#: Explicit override (tests); None means resolve fleet.jobs_db() on every connection, so every checkout
+#: pointed at the same run state shares ONE ledger -- and therefore one max_inflight and one prefill lock.
+DB = None
+
+
+def db_path():
+    if DB is not None:
+        return Path(DB)
+    import fleet
+    return fleet.jobs_db()
+
 
 def _conn():
-    DB.parent.mkdir(exist_ok=True)
-    c = sqlite3.connect(str(DB), timeout=15)
+    path = db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(str(path), timeout=15)
     c.execute("CREATE TABLE IF NOT EXISTS jobs "
               "(id TEXT PRIMARY KEY, worker TEXT, prompt TEXT, started REAL, ended REAL, status TEXT, note TEXT)")
     return c

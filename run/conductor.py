@@ -1320,6 +1320,9 @@ def _cmd_autonomous(a):
                          for rec in (goals.state(gid).get("assignments") or {}).values())
         ok, reason, pf_rows = preflight.gate(workers, need_tool_service=need_tools)
         print("tool service: required" if need_tools else "tool service: not-needed (not probed)")
+        import fleet as _fleet
+        for _k, _v in _fleet.state_paths().items():
+            print("state {0:9} {1}".format(_k + ":", _v))
         if not ok:
             print("PREFLIGHT FAILED: " + reason)
             print("  fix the fleet, or re-run with --skip-preflight to bypass.")

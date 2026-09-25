@@ -41,7 +41,14 @@ def _runs_dir():
     """The run-state root (FLEET_RUNS_DIR aware) -- the same one the verified writer uses."""
     import fleet
     return fleet.runs_root()
-STORE = Path(os.environ.get("FLEET_MEMORY_DIR") or (ROOT / "runs" / "memory"))
+def _memory_dir():
+    import fleet
+    return fleet.memory_dir()
+
+
+# FLEET_MEMORY_DIR, else <runs root>/memory: retained experience must follow the run state it came
+# from, or a checkout pointed at another tree neither reads nor extends what that fleet learned.
+STORE = _memory_dir()
 LESSONS = "lessons.jsonl"
 SKILLS = "skills.jsonl"
 SCHEMA = 2

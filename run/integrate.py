@@ -144,7 +144,8 @@ def _sha_file(p: Path) -> str:
 
 
 def _tree(goal_id: str) -> Path:
-    base = Path(os.environ.get("FLEET_INTEGRATE_DIR") or (ROOT / "runs" / "integrate"))
+    import fleet
+    base = fleet.integrate_dir()   # FLEET_INTEGRATE_DIR, else <runs root>/integrate
     return Path(base) / goal_id
 
 

@@ -288,6 +288,42 @@ def runs_root():
     return Path(env) if env else ROOT / "runs"
 
 
+def _under_runs(env_name, leaf):
+    env = os.environ.get(env_name)
+    return Path(env) if env else runs_root() / leaf
+
+
+def goals_dir():
+    """Goal ledgers. FLEET_GOALS_DIR, else <runs root>/goals."""
+    return _under_runs("FLEET_GOALS_DIR", "goals")
+
+
+def integrate_dir():
+    """Integration trees (candidate/live checkpoints). FLEET_INTEGRATE_DIR, else <runs root>/integrate."""
+    return _under_runs("FLEET_INTEGRATE_DIR", "integrate")
+
+
+def memory_dir():
+    """Retained experience and worker profiles. FLEET_MEMORY_DIR, else <runs root>/memory."""
+    return _under_runs("FLEET_MEMORY_DIR", "memory")
+
+
+def jobs_db():
+    """The dispatch ledger: per-worker max_inflight and the cluster PREFILL LOCK live here. It MUST be
+    shared by every process that can reach the same servers -- two ledgers mean two independent
+    concurrency limits, and two concurrent prefills are what crash the mlx cluster. FLEET_JOBS_DB, else
+    <runs root>/jobs.sqlite3 (so a checkout pointed at another tree's run state shares its ledger)."""
+    env = os.environ.get("FLEET_JOBS_DB")
+    return Path(env) if env else runs_root() / "jobs.sqlite3"
+
+
+def state_paths():
+    """Every persistent store a run reads or writes, resolved now. Shown at preflight so a split
+    between checkouts is visible before dispatch instead of discovered as a lost receipt."""
+    return {"runs": runs_root(), "jobs_db": jobs_db(), "goals": goals_dir(),
+            "integrate": integrate_dir(), "memory": memory_dir(), "registry": registry_path()}
+
+
 REGISTRY_FILE = registry_path()
 #: Why registered workers are missing or incomplete, or None. Empty file == no error: a fleet with
 #: no registrations is the normal state, and reporting it as a problem trains people to ignore this.

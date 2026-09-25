@@ -29,7 +29,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STORE = Path(os.environ.get("FLEET_MEMORY_DIR") or (ROOT / "runs" / "memory"))
+def _memory_dir():
+    import fleet
+    return fleet.memory_dir()
+
+
+STORE = _memory_dir()   # FLEET_MEMORY_DIR, else <runs root>/memory (same store as memory.py)
 FILE = "workers.jsonl"
 RETRY_AFTER = 3          # skips on a family before a down-ranked worker is tried again
 MIN_OVERLAP = 0.3

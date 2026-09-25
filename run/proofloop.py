@@ -224,11 +224,10 @@ def freeze_baseline(goal_id):
     # never reaches, so excluding them would wrongly drop the project's own files (a real launcher).
     import os as _os
     _harness = []
-    for var, default in (("FLEET_GOALS_DIR", ROOT / "runs" / "goals"),
-                         ("FLEET_INTEGRATE_DIR", ROOT / "runs" / "integrate"),
-                         ("FLEET_RUNS_DIR", ROOT / "runs")):
+    import fleet as _fleet
+    for h0 in (_fleet.goals_dir(), _fleet.integrate_dir(), _fleet.runs_root()):
         try:
-            h = Path(_os.environ.get(var) or default).resolve()
+            h = Path(h0).resolve()
             h.relative_to(proot)          # keep only harness dirs nested under project_root
             _harness.append(h)
         except (OSError, ValueError):

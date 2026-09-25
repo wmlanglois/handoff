@@ -581,6 +581,59 @@ def _safe(v):
         return "<unconfigured: see fleet_settings.example.py>"
 
 
+#: The OpenAI-compatible local servers a first-use user is most likely already running. A returning
+#: user's saved workers live in the registry and are reused directly; this is only for finding a
+#: first endpoint when nothing is registered yet.
+DEFAULT_ENDPOINTS = [
+    ("http://localhost:1234", "LM Studio"),
+    ("http://localhost:8080", "llama.cpp (llama-server)"),
+    ("http://localhost:11434", "Ollama"),
+    ("http://localhost:1337", "Jan"),
+]
+
+
+def connect(urls=None, *, path=None, register_found=True, recheck=True,
+            discover_timeout=DISCOVER_TIMEOUT):
+    """First-use / returning-user helper (issues #11, #16). Never raises.
+
+    Reuses what is already saved -- a returning user's registry persists across projects, so this
+    re-canaries the saved workers instead of re-onboarding -- then probes the common local model
+    servers for an OpenAI /v1/models endpoint and REGISTERS what actually generates (register()
+    qualifies with a real completion; a reachable port is not proof). Returns a structured report;
+    the CLI turns an empty result into plain "here is how to start a model" guidance.
+    """
+    candidates = list(urls) if urls is not None else [u for u, _ in DEFAULT_ENDPOINTS]
+    labels = {} if urls is not None else {u: lbl for u, lbl in DEFAULT_ENDPOINTS}
+    existing = entries(path)
+    existing_urls = {(w.get("url") or "").rstrip("/") for w in existing.values()}
+    saved = []
+    for nm, w in existing.items():
+        row = {"name": nm, "url": w.get("url"), "model": w.get("model")}
+        if recheck:
+            try:
+                row["health"] = health(nm, live=True, path=path)
+            except Exception as e:  # a re-canary failure is data, not a crash
+                row["health"] = {"status": "error", "error": repr(e)}
+        saved.append(row)
+    found, registered, failed = [], [], []
+    for url in candidates:
+        d = discover(url, timeout=discover_timeout)
+        if not d["ok"]:
+            failed.append({"url": url, "label": labels.get(url, ""), "error": d["error"]})
+            continue
+        found.append({"url": url, "label": labels.get(url, ""), "models": d["models"]})
+        if register_found and url.rstrip("/") not in existing_urls:
+            try:
+                rec = register(url, path=path)
+                registered.append({"url": url, "name": suggest_name(url), "model": rec["model"]})
+            except (Unqualified, ValueError) as e:
+                failed.append({"url": url, "label": labels.get(url, ""),
+                               "error": "advertises models but did not qualify: {0}".format(e)})
+    usable = bool(saved) or bool(registered)
+    return {"saved": saved, "found": found, "registered": registered, "failed": failed,
+            "usable": usable}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -607,7 +660,35 @@ def main(argv=None):
     q.add_argument("url")
     q.add_argument("--model")
 
+    c = sub.add_parser("connect", help="first-use: find and register a local model server, and "
+                                       "re-check already-saved workers")
+    c.add_argument("--url", action="append", dest="urls",
+                   help="probe this url instead of the common defaults (repeatable)")
+    c.add_argument("--no-register", action="store_true", help="only report what is found")
+    c.add_argument("--no-recheck", action="store_true", help="do not re-canary saved workers")
+
     args = ap.parse_args(argv)
+
+    if args.cmd == "connect":
+        rep = connect(urls=args.urls, register_found=not args.no_register,
+                      recheck=not args.no_recheck)
+        for s in rep["saved"]:
+            h = s.get("health") or {}
+            print(f"  saved      {s['name']:<18} {_safe(s['url'])[:34]:<34} {h.get('status', '-')}")
+        for r in rep["registered"]:
+            print(f"  registered {r['name']:<18} {_safe(r['url'])[:34]:<34} model={_safe(r['model'])[:24]}")
+        for f in rep["failed"]:
+            print(f"  no model   {(f['label'] or f['url']):<18} {_safe(f['url'])[:34]:<34} {f['error']}")
+        if not rep["usable"]:
+            print("\n  No working model found. Start one, then re-run `registry.py connect`:")
+            print("    LM Studio  ->  Developer tab, Start Server   (http://localhost:1234)")
+            print("    llama.cpp  ->  llama-server -m your-model.gguf --port 8080")
+            print("    Ollama     ->  ollama serve                  (http://localhost:11434)")
+            print("  Or point at a specific address:  registry.py connect --url http://HOST:PORT")
+            return 1
+        print(f"\n  ready: {len(rep['saved'])} saved, {len(rep['registered'])} newly registered.")
+        print(f"  stored in {fleet.registry_path()}")
+        return 0
 
     if args.cmd == "add":
         overrides = {"ctx": args.ctx, "max_inflight": args.max_inflight,

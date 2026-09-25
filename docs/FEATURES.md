@@ -32,7 +32,11 @@ These are not the job:
 
 ## First use
 
-`python run/conductor.py start <folder> --name <project> [--package <path>] [--project-kind local|git-existing|git-new] [--intake-mode guided|brief|defer] [--brief FILE] [--draft]`
+`python run/conductor.py start <folder> --name <project> [--package <path>] [--project-kind local|git-existing|git-new] [--intake-mode guided|brief|defer] [--brief FILE] [--draft] [--tool-mode chat-only|tools]`
+
+New non-deferred setup requires `--tool-mode` before model calls. `chat-only` denies worker tool execution; `tools` authorizes workspace file/code tools on the configured trusted service host for all new assignments, including repairs and follow-ons. The service is not started automatically. The choice is persisted as `tool_mode` in project.json and the goal, and passed to the planner and cards. Worker self-checks do not replace acceptance checks or disclose hidden oracle code. Existing packages without the field preserve legacy per-contract settings with a notice; no authority is inferred from cadence, registration, or delegation.
+
+The mode is immutable after proposal/approval: reject an unapproved proposal before selecting a different mode, or create a new explicitly authorized goal for approved work. Do not reset the project's spending limits to change modes. Resume without the flag reuses the saved choice. Deferred setup may omit the choice until resumed through `start`.
 
 Default package when `--package` is omitted: `intake/packages/<name>/` under this repository.
 
@@ -76,7 +80,9 @@ E3 letters: `A` every finished piece, `B` one batch, `C` until done or stuck, `D
 
 Prints goal ids.
 
-`python run/conductor.py plan <goal> --criterion TEXT [--criterion TEXT ...] [--budget N] [--plan-file PATH] [--project-root PATH] [--integration PATH] [--integration-check PATH]`
+`python run/conductor.py plan <goal> --criterion TEXT [--criterion TEXT ...] [--budget N] [--plan-file PATH] [--project-root PATH] [--integration PATH] [--integration-check PATH] [--tool-mode chat-only|tools]`
+
+`--tool-mode` sets the same execution policy for this new standalone goal. Omission keeps the legacy per-contract behavior. Imported contracts are checked against explicit chat-only denial; tools mode provisions new contracts before the plan gate.
 
 Opens a goal and proposes a plan. `--criterion` is repeatable; each value is one acceptance sentence. `--budget` is an integer cap on assignments; `0` means no cap. `--plan-file` is a JSON object with an `outcomes` list (or `jobs`) of contracts, used instead of a model. `--project-root` is the directory where declared relative sources resolve. `--integration` is a JSON file of groups, destinations, and a frozen check. `--integration-check` is that check's Python source.
 
@@ -94,13 +100,13 @@ Sends an unapproved proposed plan back to the planner on the same goal. Records 
 
 Packet-only mode dispatches the approved plan and stops; **packet completion is not project completion**. Autonomous mode adds one connected proof: approved full `scoped.md` → approved interface map → receipt-bound candidate → one fresh-process launch journey → one owned, evidence-based repair if needed → a promoted checkpoint. The reusable entry point is `run/conductor.py`.
 
-`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME] [--plan-file PATH] [--delegate NAME] [--skip-preflight]`
+`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME] [--plan-file PATH] [--delegate NAME] [--skip-preflight] [--tool-mode chat-only|tools]`
 
 `--decisions` and `--seconds` are required integers. `--workers` is a comma-separated list of worker names; when omitted the configured `PRIMARY_WORKER` is used (`cluster` if unset). `--plan-file` is a JSON object with an `outcomes` list of contracts; at the planning stage it supplies the proposal instead of calling the model. It is still gated, approved interactively or under delegation, and mapped through the same path. A rejected supplied plan is reported, not model-replaced; the flag does not replace an already-approved plan and does not compile a Markdown backlog. `--map` is a JSON file and is accepted only together with `--as`. The file is one object: `components` is a list of `{id, path, provides, calls?}`, and `milestone` is `{id, command}` where `command` is a list of strings, the first usually the Python executable and the last the launcher path. A person can skip `--map` and approve the derived map with `approve-map --from-proposed` instead.
 
 Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately, and sets autonomous mode with a durable budget. Without delegation, the ordinary path stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE`), then `AWAITING_MAP_APPROVAL`, then permits execution after approval. `--delegate NAME` records standing approval of an **existing** scope page, the proposed plan, and the derived map. It does not generate missing intake/scope or waive budgets, never-rules, or human-only sign-offs. Delegated resume also handles an already-proposed map: while no approved map exists, the map is derived from the current approved plan and an outdated proposal is replaced before approval. Failed derivation returns `MAP_DERIVATION_FAILED`, not dispatch. An already-approved stale map still fails the execution validity check. `--decisions 0` is a visible choice, never a hidden zero.
 
-Before `run_goal`, default preflight canaries the selected coding lanes and named skeptic and checks the tool service. A failure returns `PREFLIGHT_FAILED`. An explicitly empty `SKEPTIC_WORKER` produces a no-independent-review warning, rather than silently omitting the role. `--skip-preflight` or any nonempty `HANDOFF_SKIP_PREFLIGHT` bypasses this entire check (even the string `0` is nonempty); this is a diagnostic escape hatch, not evidence that the environment works. The service check is currently unconditional in this gate, including non-tool plans. Preflight is not automatically run by `start` before intake/planning.
+Before `run_goal`, default preflight canaries selected coding lanes and the named skeptic. When any assignment uses tools it also checks every selected coding lane's tool-call capability and requires the tool service. Otherwise the service is reported `not-needed` and not probed; worker and skeptic checks still run. A failure returns `PREFLIGHT_FAILED`. An explicitly empty `SKEPTIC_WORKER` produces a no-independent-review warning. `--skip-preflight` or any nonempty `HANDOFF_SKIP_PREFLIGHT` bypasses this entire check (even `0`); this is a diagnostic escape hatch, not readiness evidence. Preflight is not automatically run by `start` before intake/planning.
 
 This is one goal's connected execution loop, not a durable controller over an entire multi-milestone backlog. That remaining connection is [#7](https://github.com/wmlanglois/handoff/issues/7); Markdown import is [#21](https://github.com/wmlanglois/handoff/issues/21).
 

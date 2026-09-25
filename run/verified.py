@@ -1479,6 +1479,8 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
     """Run the rounds and return the run record. The caller owns process exit codes and printing.
 
     Returns {outcome, rounds, best_artifact, history, receipt, deltas, snapshots, basis}."""
+    import toolpolicy
+    toolpolicy.check_card(card)
     ws = Path(ws)
     # Default from loop_config so the policy lives in ONE place the operator can see, rather than
     # being a literal buried in a function signature.
@@ -1837,6 +1839,8 @@ def main():
     a = ap.parse_args()
     card_text = Path(a.card).read_text(encoding="utf-8")
     card = json.loads(card_text)
+    import toolpolicy
+    toolpolicy.check_card(card)
     # EXECUTOR-START VERIFICATION, before anything is written or any worker is called. The
     # dispatching controller checked it owned this job; a process spawn later that may no longer
     # be true, and the cost of being wrong is two processes running one job against one workspace.

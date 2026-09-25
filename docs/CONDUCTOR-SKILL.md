@@ -28,7 +28,9 @@ Run this sequence. Do not skip to a packet map and call it done.
 
 Operator command: `python run/conductor.py autonomous <package> --decisions N --seconds N --workers <names>`, adding `--delegate <name>` only under standing authorization. Stored budgets persist for the same goal; new goals must not be used to reset an authorized project budget. `approve-map` is the interactive map gate.
 
-Default autonomous preflight checks selected workers, a named skeptic, and the tool service; an explicitly empty skeptic prints a warning. A same-model review is not independent. Do not use `--skip-preflight` to present an unverified environment as ready. A client timeout is not proof the remote generation stopped.
+Before planning, obtain the operator's execution choice: `start --tool-mode chat-only` or `--tool-mode tools`. Explain that tools execute code on the trusted service host; neither cadence nor delegated approval grants that authority. Save and reuse the choice, including repairs/follow-ons. Coding tools should inspect staged public interfaces and run bounded self-checks, not demand hidden acceptance code. Chat-only briefs must supply the necessary public interface/return-shape context. Do not promise tools will fix a model's mistakes. Legacy packages retain per-contract settings until explicitly migrated before a proposal; never toggle an approved/in-flight contract or reset its budget.
+
+Default autonomous preflight checks selected workers and a named skeptic. Tool plans additionally require tool-call capability on all selected coding lanes and a healthy service. For chat-only plans the service is explicitly not needed and is not probed. An empty skeptic prints a warning. A same-model review is not independent. Do not use `--skip-preflight` to present an unverified environment as ready. A client timeout is not proof remote generation stopped.
 
 Use an isolated runtime checkout and do not edit it during dispatch. `fingerprint` checks `run/` only and is manual, not a guarantee of stable runtime code (#9).
 

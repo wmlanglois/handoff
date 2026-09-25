@@ -47,15 +47,19 @@ Registration does not select roles. Create the Git-ignored `fleet_settings.local
 
 Tool-using assignments additionally require the trusted local service: `python tool_runtime/service.py` in a separate terminal. It generates a token under ignored `runs/tool-service/`. Its `python_run` tool executes code on this host, so ask before starting it. `python check/preflight.py` probes the configured workers **and** this service; it cannot pass until both are ready. Neither preflight nor a worker is required just to open intake.
 
-Currently `autonomous` also checks the tool service in its default pre-dispatch preflight, even for a non-tool plan. Do not promise a service-free default run. `--skip-preflight` bypasses the entire preflight, not only the service check; use it only for explicit diagnostics, not to disguise an unverified fleet.
+Choose worker execution before planning: `--tool-mode chat-only` gives workers text-only generation; they cannot inspect workspace files or run their own checks. `--tool-mode tools` authorizes the configured trusted tool service for every new assignment, including repairs and follow-ons. Coding workers are instructed to inspect staged interfaces and run bounded self-checks. This can execute code on the service host; it is not a security sandbox, does not start the service, and does not authorize unrelated paths or changes to your limits.
+
+The choice is saved in the project package and goal. `autonomous` verifies selected workers and the named skeptic in either mode; it also requires tool-call capability on each selected coding lane and a working service when the plan uses tools. For chat-only work it explicitly reports the service as `not-needed` and does not probe it. `--skip-preflight` bypasses all these checks, not just the service; use it only for explicit diagnostics.
+
+Existing packages without this setting retain their per-contract behavior and print a legacy-policy notice. To select a mode before their first plan, pass `--tool-mode` to `autonomous` (or `start`). Once a plan is proposed, the mode is frozen: reject an unapproved proposal before changing it; approved work needs a new explicitly authorized goal, not an in-place toggle or a budget reset. Omitting the flag on resume keeps the saved choice. Review cadence and `--delegate` never enable tools by themselves.
 
 ### 2. Open intake, then stop for the person's answers
 
 Ask what the project should actually do; a folder name is not a specification. From the Handoff checkout, choose one of these commands (replace the paths and name):
 
 ```text
-python run/conductor.py start <project-folder> --name <project-name> --package <package-folder> --project-kind local --intake-mode guided
-python run/conductor.py start <project-folder> --name <project-name> --package <package-folder> --project-kind local --intake-mode brief --brief <existing-brief.md>
+python run/conductor.py start <project-folder> --name <project-name> --package <package-folder> --project-kind local --intake-mode guided --tool-mode chat-only
+python run/conductor.py start <project-folder> --name <project-name> --package <package-folder> --project-kind local --intake-mode brief --brief <existing-brief.md> --tool-mode chat-only
 python run/conductor.py start <project-folder> --name <project-name> --package <package-folder> --project-kind local --intake-mode defer
 ```
 

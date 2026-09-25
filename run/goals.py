@@ -369,7 +369,8 @@ def propose(goal_id, contracts, *, root=None):
     by_id = {c["id"]: c for c in (doc.get("criteria") or [])}
     stored = []
     for c in contracts:
-        c = dict(c)
+        from toolpolicy import apply
+        c = apply(c, doc.get("tool_mode"))
         crit = by_id.get(c.get("criterion_id"))
         if crit:
             c["criterion_source"] = crit.get("text", "")
@@ -506,6 +507,23 @@ def set_run_policy(goal_id, *, review_cadence="", review_letter="", domain_branc
 
 
 @_serialised
+def set_tool_mode(goal_id, mode, *, root=None):
+    """Select authority before proposing work; never rewrite approved contracts."""
+    from toolpolicy import validate
+    validate(mode)
+    doc = _load(goal_id, root)
+    if doc.get("tool_mode") == mode:
+        return mode
+    if doc.get("approved") or doc.get("proposed") or doc.get("assignments"):
+        raise GoalError("tool mode is frozen once work is proposed; reject an unapproved plan first, "
+                        "or explicitly create a new authorized goal for approved work")
+    doc["tool_mode"] = mode
+    _event(doc, "tool_mode_selected", mode=mode, source="operator-cli")
+    _save(doc, root)
+    return mode
+
+
+@_serialised
 def add_criterion(goal_id, criterion, *, root=None):
     """Add one criterion to an unapproved goal. Used when a prose example needs a person."""
     doc = _load(goal_id, root)
@@ -537,6 +555,8 @@ def record_integration_status(goal_id, meta, *, root=None):
 
 
 def _add_assignment(doc, contract):
+    from toolpolicy import apply
+    contract = apply(contract, doc.get("tool_mode"))
     name = contract.get("name")
     if not name:
         raise GoalError("an assignment with no name cannot be tracked or depended on")
@@ -1559,7 +1579,12 @@ def card_for(contract, doc=None):
     reads, or it does not reach the worker at all. `experience` and `observed` on the card record
     exactly what was attached, so a run's evidence can say which lesson was in play."""
     from plan import contract_brief          # local import: plan imports nothing from goals
+    import toolpolicy
+    tool_mode = (doc or {}).get("tool_mode")
+    toolpolicy.check_card(dict(contract, tool_mode=tool_mode))
     brief = contract_brief(contract, goal_text=(doc or {}).get("goal"))
+    if tool_mode is not None:
+        brief += "\n\n" + toolpolicy.instruction(tool_mode)
     experience, observed = [], []
     crit_text = ""
     if doc:
@@ -1728,6 +1753,7 @@ def card_for(contract, doc=None):
     rid = run_id(None, contract["name"], doc=doc) if doc else contract["name"]
     return {"name": rid,                       # execution identity: workspace, queue file, receipt
             "assignment": contract["name"],    # ledger identity: what the goal calls this work
+            "tool_mode": tool_mode,
             "run_id": rid,
             "worker": contract.get("worker"),
             "approach": contract.get("approach"),

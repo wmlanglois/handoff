@@ -889,7 +889,7 @@ def apply(goal_id, decision, delta, root=None, sources="", observe_root=None, as
                     "{0} {1}".format(c.get("type"), c.get("criterion_id") or c.get("path") or c.get("id")
                                      or c.get("name") or c.get("memory_id")) for c in decision["reconsider_when"]))
         if res == "accept":
-            # Ordinary work under the goal's existing budget and permissions: no tools, no worker
+            # Ordinary work under the goal's existing budget and tool policy: no worker
             # pin, no new criterion. What the worker proposed, the architect scoped, the ledger
             # records as origin=proposal so selection can see where it came from.
             contract = planning.as_contract({
@@ -899,7 +899,9 @@ def apply(goal_id, decision, delta, root=None, sources="", observe_root=None, as
                 "done_when": decision.get("done_when") or ["the proposed work is delivered"],
                 "evidence": "accepted worker proposal {0}; acceptance is the criterion's own check".format(
                     decision["proposal_id"]),
-                "needs": [], "worker": None, "tools": False, "oracle": decision.get("oracle", ""),
+                "needs": [], "worker": None,
+                "tools": goals.state(goal_id, **kw).get("tool_mode") == "tools",
+                "oracle": decision.get("oracle", ""),
                 "artifact": decision.get("artifact") or "output.md",
                 "oracle_covers_done_when": True,
                 "origin": "proposal", "approach": decision.get("approach") or None,
@@ -998,7 +1000,9 @@ def apply(goal_id, decision, delta, root=None, sources="", observe_root=None, as
             "brief": decision["brief"],
             "done_when": decision.get("done_when") or ["the follow-on brief is satisfied"],
             "evidence": "architect follow-on; acceptance is the criterion's own check",
-            "needs": [], "worker": None, "tools": False, "oracle": decision.get("oracle", ""),
+            "needs": [], "worker": None,
+            "tools": goals.state(goal_id, **kw).get("tool_mode") == "tools",
+            "oracle": decision.get("oracle", ""),
             "origin": "followon", "approach": decision.get("approach") or None,
         })
         goals.assign(goal_id, [contract], **kw)

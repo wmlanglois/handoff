@@ -1250,6 +1250,7 @@ class Hooks:
     worker: object
     oracle: object = None
     skeptic: object = None
+    skeptic_on_failure: object = None      # (rnd, out, root, reason) -> questions, on a FAILED check
     diagnose: object = None
     judge: object = None
     evidence: object = None
@@ -1552,9 +1553,21 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
             # deferred to AFTER the progress delta and the decision (below), so recurrence is only a
             # signal and this round's real movement is what gates it.
             reason = oracle_reason(oracle_msg)
-            note = "(oracle failed; mechanical feedback only)"
+            # A failing packet used to get NO skeptic input: the skeptic ran only after a pass, and
+            # tools mode skipped the pre-check questions too. The reviewer looks at the file and the
+            # failure and asks what would find the real defect; its questions ride in the guidance.
+            # Optional hook: stub Hooks without it (and every existing test) get the old behavior.
+            q = ""
+            _sf = getattr(hooks, "skeptic_on_failure", None)
+            if _sf is not None:
+                try:
+                    q = str(_sf(rnd, output, review_root, reason) or "").strip()
+                except Exception:
+                    q = ""
+            note = ("SKEPTIC on the failure: " + q[:600]) if q else "(oracle failed; mechanical feedback only)"
             ruling = (f"REDO -- the check failed: {reason}. "
-                      f"Change the file so this check passes. Do not return the same file again.")
+                      + (f"A skeptical reviewer looked at the file and asks: {q[:600]} " if q else "")
+                      + "Change the file so this check passes. Do not return the same file again.")
 
         # --- environment state, built from disk. Nothing below this line reads `ruling`. --------
         # Pass the oracle verdict to criteria evaluation when the hook accepts it. Older hooks
@@ -2199,6 +2212,17 @@ def main():
                            SKEPTIC_WORKER, review_root, 8, system=skeptic.SYSTEM_REVIEW,
                            artifact=_art) or "SKEPTIC: (no note)"
 
+    def live_skeptic_on_failure(rnd, output, review_root, reason):
+        if not (skeptic_bounce and SKEPTIC_WORKER):
+            return ""
+        _art = card.get("artifact") or "output.md"
+        q = skeptic.run(f"The deliverable `{_art}` FAILED its check: {str(reason)[:300]}. Look at the file "
+                        f"and ask the questions that would help the worker find the real defect -- not a "
+                        f"restatement of the error.", SKEPTIC_WORKER, review_root, 8, artifact=_art,
+                        system=skeptic.SYSTEM_QUESTION) or ""
+        emit("skeptic_on_failure", round=rnd, q=q[:280])
+        return q
+
     def live_judge(rnd, output, note):
         judge_card = card_text + (
             "\n\nREPLY-FORMAT the worker was REQUIRED to follow (do NOT fault the worker for "
@@ -2245,6 +2269,7 @@ def main():
             return ""
 
     hooks = Hooks(worker=live_worker, oracle=live_oracle, skeptic=live_skeptic, diagnose=live_diagnose,
+                  skeptic_on_failure=live_skeptic_on_failure,
                   judge=live_judge, commentary=live_commentary,
                   evidence=lambda root: authority_evidence | workspace_evidence(
                       root, artifacts=[card.get("artifact") or "output.md"]),

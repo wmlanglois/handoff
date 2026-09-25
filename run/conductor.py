@@ -1184,8 +1184,17 @@ def _cmd_scope(a):
 def _cmd_autonomous(a):
     """Operator entry. Prints the recorded budgets, then runs the loop under those budgets."""
     import orchestrate
-    gid = autonomous_launch(Path(a.package).resolve(), decisions=a.decisions, seconds=a.seconds)
+    import projectpkg
+    package = Path(a.package).resolve()
     delegate = (getattr(a, "delegate", "") or "").strip() or None
+    # SCOPE gate (issue #13): scope is the one gate --delegate did not cover, so a "paste once
+    # and walk away" run always stopped here for a human. A standing --delegate is the human's
+    # up-front approval of the exact scoped.md bytes, exactly like the plan and map gates below;
+    # the budget, never-rules and consequential sign-offs stay hard bounds regardless.
+    if delegate and (package / "scoped.md").is_file() and not projectpkg.approval_matches(package):
+        projectpkg.approve_scope(package, delegate, note="standing --delegate (unattended run)")
+        print("scoped.md AUTO-APPROVED by standing delegate {0}.".format(delegate))
+    gid = autonomous_launch(package, decisions=a.decisions, seconds=a.seconds)
     if a.map:
         if not (a.approver or "").strip():
             raise SystemExit("a map approval needs --as <you>")

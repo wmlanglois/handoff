@@ -1278,7 +1278,13 @@ def _prior_artifact(ws):
 # Any language tag (python, json, md, toml, ...) or none -- the deliverable is the file the card
 # NAMES, whatever its type. The `proposal` fence is explicitly excluded so a worker-proposal block
 # is never mistaken for the deliverable (extract_proposals owns it).
-_FENCE = re.compile(r"```[ \t]*(?!proposal\b)(?:[a-zA-Z0-9_+.\-]+[ \t]*)?\r?\n(.*?)\r?\n[ \t]*```", re.S | re.I)
+_FENCE = re.compile(r"(?P<f>`{3,}|~{3,})[ \t]*(?!proposal\b)(?:[a-zA-Z0-9_+.\-]+[ \t]*)?\r?\n(?P<body>.*?)\r?\n[ \t]*(?P=f)", re.S | re.I)
+# Fallback for a common local-model slip: a single opening fence the model never closed. Only
+# applied when there is exactly one lone fence marker (no properly-closed fence anywhere), so a
+# reply that is plainly "the file in a fence, minus the closer" is still recovered. Junk with no
+# fence still yields "" -- the refusal the evidence sensitivity probe relies on -- and the same
+# transform runs at write time and seal time, so byte-exact lineage is preserved.
+_FENCE_OPEN = re.compile(r"(?:`{3,}|~{3,})[ \t]*(?!proposal\b)(?:[a-zA-Z0-9_+.\-]+[ \t]*)?\r?\n(?P<body>.*)$", re.S | re.I)
 
 
 def oracle_coverage(card):
@@ -1363,7 +1369,18 @@ def first_code_block(output):
     fence produce nothing, which is the refusal the sensitivity probe expects."""
     text = output.decode("utf-8", "replace") if isinstance(output, (bytes, bytearray)) else (output or "")
     m = _FENCE.search(text)
-    return (m.group(1) + "\n") if m else ""
+    if m:
+        return m.group("body") + "\n"
+    # No properly-closed fence. Recover a single unterminated fence (opening ``` / ~~~ that the
+    # model never closed) ONLY when there is exactly one lone fence marker, so junk with no fence
+    # still yields "" and a reply with several fences is not mis-sliced.
+    markers = len(re.findall(r"`{3,}|~{3,}", text))
+    if markers == 1:
+        mo = _FENCE_OPEN.search(text)
+        if mo:
+            body = mo.group("body").rstrip()
+            return (body + "\n") if body else ""
+    return ""
 
 
 def _snapshot_attempt(ws, rnd, artifact):

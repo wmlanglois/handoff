@@ -31,12 +31,13 @@ Use Python 3.11 or newer. The current connected project path uses an authenticat
 Ask the user where an already-running OpenAI-compatible local model API is, including its base URL and model name. Do not search unrelated local repositories for addresses or credentials. With permission to make a short generation check, run:
 
 ```text
+python run/registry.py connect        # first use: find a local model server, register it, re-check saved ones
 python run/registry.py check http://your-host:8080 --model your-model
 python run/registry.py add http://your-host:8080 --name my-worker --model your-model
 python run/registry.py list
 ```
 
-`check` does not register; `add` qualifies by generating and writes a per-user registry outside this repo. The URL and model are examples, not defaults. Create the Git-ignored `fleet_settings.local.py` with `PRIMARY_WORKER = "my-worker"` and `SKEPTIC_WORKER = "my-worker"` for a one-endpoint trial; later, the skeptic can have its own registered endpoint. **A CLI-only skeptic is not supported by this connected path today.** Do not copy the full example file's Mac/miner placeholder topology unless you actually use that hardware. [The settings template](fleet_settings.example.py) documents optional lab-specific fields.
+`connect` is the first-use path: if you already run LM Studio, llama.cpp, Ollama, or Jan, it probes their common local ports, registers what actually generates, and re-checks anything already saved (or tells you how to start a model if nothing answers). `check` does not register; `add` qualifies by generating and writes a per-user registry outside this repo. The URL and model are examples, not defaults. That per-user registry is shared across every clone/project; [`workers.example.json`](workers.example.json) documents its shape, and setting `FLEET_REGISTRY=/path/to/project/workers.json` keeps a **project-local** registry instead of the shared one. Create the Git-ignored `fleet_settings.local.py` with `PRIMARY_WORKER = "my-worker"` and `SKEPTIC_WORKER = "my-worker"` for a one-endpoint trial; later, the skeptic can have its own registered endpoint. **A CLI-only skeptic is not supported by this connected path today.** Do not copy the full example file's Mac/miner placeholder topology unless you actually use that hardware. [The settings template](fleet_settings.example.py) documents optional lab-specific fields.
 
 Tool-using assignments additionally require the trusted local service: `python tool_runtime/service.py` in a separate terminal. It generates a token under ignored `runs/tool-service/`. Its `python_run` tool executes code on this host, so ask before starting it. `python check/preflight.py` probes the configured workers **and** this service; it cannot pass until both are ready. Neither preflight nor a worker is required just to open intake.
 

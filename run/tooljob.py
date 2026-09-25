@@ -422,6 +422,10 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
             "implementation and checks, but a successful Python call alone is not a delivery "
             "receipt. Do not modify the artifact after its final files.write.".format(artifact))
     res = agent.run(d, execution_id, job, {"url": w["url"], "model": w["model"], "slots": 2})
+    for index, evidence in enumerate(res.get("generations", [])):
+        emit("generation", index=index, evidence=evidence)
+    if res.get("loop_stop"):
+        emit("tool_loop_stop", reason=res["loop_stop"])
     content = (res["choices"][0]["message"].get("content") or "").strip()
     # PROVENANCE: bind ONLY to a service write RECEIPT -- a successful files.write whose returned
     # sha256 matches the artifact's current bytes. No inference from "a file changed" or "some tool

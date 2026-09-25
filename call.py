@@ -144,10 +144,12 @@ def est_tokens(messages):
     return sum(len(m.get("content") or "") for m in messages) // 4 + 8 * len(messages)
 
 
-def fit_context(messages, ctx, reserve, log=None):
+def fit_context(messages, ctx, reserve, log=None, preserve_first_user=False):
     """Keep the request under the worker's context window. Reserve room for the completion. Drop the
     OLDEST non-system messages first (they're the stalest); always keep system messages + the last
-    message. Raise if even system+last can't fit (a single over-long input the caller must shrink)."""
+    message. With preserve_first_user, also retain the first user request containing essential
+    carry. Raise if required messages cannot fit; never silently truncate essential reference data.
+    Capacity is estimated, not measured with the backend tokenizer."""
     budget = ctx - reserve
     if budget <= 0:
         raise ValueError(f"context guard: ctx {ctx} smaller than reserve {reserve}")
@@ -155,13 +157,16 @@ def fit_context(messages, ctx, reserve, log=None):
         return messages
     sys_msgs = [m for m in messages if m.get("role") == "system"]
     rest = [m for m in messages if m.get("role") != "system"]
+    pinned = []
+    if preserve_first_user and len(rest) > 1 and rest[0].get("role") == "user":
+        pinned = [rest.pop(0)]
     tail = rest[-1:] if rest else []
     middle = rest[:-1]
-    while middle and est_tokens(sys_msgs + middle + tail) > budget:
+    while middle and est_tokens(sys_msgs + pinned + middle + tail) > budget:
         middle.pop(0)
-    result = sys_msgs + middle + tail
+    result = sys_msgs + pinned + middle + tail
     if est_tokens(result) > budget:
-        raise ValueError(f"context overflow: system+last (~{est_tokens(result)} tok) exceeds budget "
+        raise ValueError(f"context overflow: required messages (~{est_tokens(result)} tok) exceeds budget "
                          f"{budget} (ctx {ctx}, reserve {reserve}); shrink the input/authority")
     if log and len(result) < len(messages):
         log(f"context guard: trimmed {len(messages) - len(result)} old message(s) to fit ctx {ctx}")
@@ -197,7 +202,11 @@ def _post_nonstream(url, body, timeout):
     req = urllib.request.Request(url + "/v1/chat/completions",
                                  data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())["choices"][0]["message"]
+        response = json.loads(r.read())
+        msg = dict(response["choices"][0]["message"])
+        from generation import response_evidence
+        msg["_handoff_generation"] = response_evidence(response, body)
+        return msg
 
 
 class PrefillLockTimeout(RuntimeError):
@@ -242,6 +251,8 @@ def _post_stream_with_prefill_lock(url, body, worker, timeout):
     # allowed to treat it as stale.
     abandoned = False
     role = "assistant"; content = []; tcs = {}
+    finish_reason = None
+    usage = None
     # PROGRESS WATCHDOG (issue #14): the socket timeout is per-READ, so a server that trickles
     # keepalives/empty chunks keeps resetting it and never trips the wall -- the stream hangs while
     # making no real progress. Bound the time since the last GENERATED token (keepalives and the
@@ -266,7 +277,12 @@ def _post_stream_with_prefill_lock(url, body, worker, timeout):
                     chunk = json.loads(payload)
                 except Exception:
                     continue
-                delta = (chunk.get("choices") or [{}])[0].get("delta", {}) or {}
+                choice = (chunk.get("choices") or [{}])[0]
+                if choice.get("finish_reason") is not None:
+                    finish_reason = choice["finish_reason"]
+                if isinstance(chunk.get("usage"), dict):
+                    usage = chunk["usage"]
+                delta = choice.get("delta", {}) or {}
                 # Release only once a GENERATED TOKEN has actually arrived. A chunk alone is not
                 # proof of generation: servers emit a role-only preamble and keepalives before the
                 # first token, and releasing on those hands the lock away mid-prefill. This server
@@ -303,15 +319,20 @@ def _post_stream_with_prefill_lock(url, body, worker, timeout):
     msg = {"role": role, "content": "".join(content)}
     if tcs:
         msg["tool_calls"] = [tcs[i] for i in sorted(tcs)]
+    from generation import response_evidence
+    msg["_handoff_generation"] = response_evidence({
+        "choices": [{"message": dict(msg), "finish_reason": finish_reason}], "usage": usage}, body)
     return msg
 
 
 def chat(worker, messages, tools=None, max_tokens=1024, think=False, temperature=0.6, timeout=300,
-         track=True, grammar=None):
+         track=True, grammar=None, preserve_first_user=False):
     """One call path. Applies the context guard, the cluster prefill lock, and (llama) grammar. When
     track=True the dispatch is logged to the ledger and capped by max_inflight."""
     w = WORKERS[worker]
-    messages = fit_context(messages, w.get("ctx", 65536), max_tokens + 512)
+    original_message_count = len(messages)
+    messages = fit_context(messages, w.get("ctx", 65536), max_tokens + 512,
+                           preserve_first_user=preserve_first_user)
     body = body_for(worker, messages, tools, max_tokens, think, temperature, grammar)
     jid = None
     if track:
@@ -324,6 +345,13 @@ def chat(worker, messages, tools=None, max_tokens=1024, think=False, temperature
             msg = _post_stream_with_prefill_lock(w["url"], body, worker, timeout)
         else:
             msg = _post_nonstream(w["url"], body, timeout)
+        from generation import response_evidence
+        generation = msg.pop("_handoff_generation", None)
+        if generation is None:
+            generation = response_evidence({"choices": [{"message": msg}]}, body)
+        generation.update({"configured_context": w.get("ctx", 65536),
+                           "input_tokens_estimate": est_tokens(messages),
+                           "messages_trimmed": original_message_count - len(messages)})
         if jid:
             jobs.close_job(jid, "done")
         # Capture the response HERE, where it arrives, before any caller has had a chance to
@@ -333,7 +361,8 @@ def chat(worker, messages, tools=None, max_tokens=1024, think=False, temperature
                               msg.get("content") or "",
                               {"temperature": temperature, "max_tokens": max_tokens,
                                "think": bool(think)})
-        return msg, {"ms": round((time.time() - t) * 1000), "backend": w["kind"], "capture": cap}
+        return msg, {"ms": round((time.time() - t) * 1000), "backend": w["kind"],
+                     "capture": cap, "generation": generation}
     except BaseException as e:
         if jid:
             jobs.close_job(jid, "error", repr(e))

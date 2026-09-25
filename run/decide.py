@@ -821,7 +821,9 @@ def carry_package(goal_id, name, orig, new_name, root=None):
 def _carry_brief(carry, artifact):
     lines = ["\n\n--- CONTINUE YOUR PRIOR WORK (do not start over) ---"]
     if carry.get("snapshot"):
-        lines.append("Your previous attempt at {0} is preserved read-only at `_carry/{1}`. READ it, "
+        lines.append("Your previous attempt at {0} is preserved read-only at `_carry/{1}`. "
+                     "With file tools, read that reference; without tools, use its contents "
+                     "supplied in the request. "
                      "keep what is correct, and apply the guidance below -- do NOT rewrite from "
                      "scratch.".format(artifact, Path(artifact).name))
     if carry.get("prior_feedback"):

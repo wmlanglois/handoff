@@ -18,6 +18,12 @@ See [current implementation status and open work](docs/IMPLEMENTATION-STATUS.md)
 
 ## Start here: one project, in order
 
+Before a first run or a substantial environment change, read the
+[technical environment guide](docs/ENVIRONMENT-REQUIREMENTS.md). It separates model serving,
+tool execution, context/output budgets, role setup and persistent state, with current commands
+and explicitly labeled proposed automation. For future inspection/dashboard work, see the
+[Phase 2 environment proposal](docs/PHASE-2-ENVIRONMENT.md).
+
 Keep Handoff in its own checkout. Your project folder is separate; `start` points to it. The generated intake package can also live outside the checkout via `--package`. A worker receives staged sources, not the whole project folder.
 
 If an AI agent is guiding setup, establish the project goal, first-use choice, model-call budget, and approval policy up front. Model connections can wait if the person defers. Do not invent endpoint addresses or turn model drafts into confirmed answers. An agent may record answers the person actually supplied, but may not confirm its own guesses under another actor name. In interactive mode, show the material and obtain approval at each gate. With explicit standing delegation, use the supported `autonomous --delegate <name>` path for existing scope, plan, and map approvals without repeatedly asking for the same authorization. Delegation does not supply missing intake answers, waive human-only sign-offs, or authorize unrelated actions. `--as` and `--delegate` record names, not authentication. "Read the README" alone does not authorize model calls or dispatch.
@@ -48,6 +54,8 @@ Registration does not select roles. Create the Git-ignored `fleet_settings.local
 Tool-using assignments additionally require the trusted local service: `python tool_runtime/service.py` in a separate terminal. It generates a token under ignored `runs/tool-service/`. Its `python_run` tool executes code on this host, so ask before starting it. `python check/preflight.py` probes the configured workers **and** this service; it cannot pass until both are ready. Neither preflight nor a worker is required just to open intake.
 
 Choose worker execution before planning: `--tool-mode chat-only` gives workers text-only generation; they cannot inspect workspace files or run their own checks. `--tool-mode tools` authorizes the configured trusted tool service for every new assignment, including repairs and follow-ons. Coding workers are instructed to inspect staged interfaces and run bounded self-checks. This can execute code on the service host; it is not a security sandbox, does not start the service, and does not authorize unrelated paths or changes to your limits.
+
+Chat-only repairs receive the full, hash-checked prior artifact as reference text in the worker request, not merely a path they cannot open. That reference is retained when older conversation turns are trimmed. Missing, changed, non-text, or oversized carry is refused explicitly; Handoff does not silently truncate it, enable tools, or raise your server limits. The context guard uses a token estimate, not the server's tokenizer.
 
 The choice is saved in the project package and goal. `autonomous` verifies selected workers and the named skeptic in either mode; it also requires tool-call capability on each selected coding lane and a working service when the plan uses tools. For chat-only work it explicitly reports the service as `not-needed` and does not probe it. `--skip-preflight` bypasses all these checks, not just the service; use it only for explicit diagnostics.
 

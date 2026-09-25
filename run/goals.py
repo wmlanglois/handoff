@@ -1765,6 +1765,8 @@ def card_for(contract, doc=None):
             "skills": skills,
             "deps": deps,
             "inputs": inputs,
+            "carry": dict(contract.get("carry") or {}),
+            "carry_error": contract.get("carry_error") or "",
             "missing_sources": missing,
             "capability": contract.get("capability", ""),
             "criterion_text": crit_text,

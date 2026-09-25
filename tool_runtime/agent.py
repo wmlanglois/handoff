@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import urllib.request
+from generation import response_evidence
 
 
 def _post(url, payload, token=None, timeout=120):
@@ -40,10 +41,17 @@ def run(dispatcher, execution_id, job, worker):
     if saved:
         messages = saved["messages"]
         rounds = saved["rounds"]
+        generations = saved.get("generations", [])
     else:
         messages = [{"role": "user", "content": job["prompt"]}]
         rounds = 0
-        dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds})
+        generations = []
+
+    def save():
+        dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds,
+                                             "generations": generations})
+
+    save()
     maximum = int(job.get("max_rounds", 16))
     while rounds < maximum:
         pending = None
@@ -59,16 +67,20 @@ def run(dispatcher, execution_id, job, worker):
         if pending is not None:
             pass
         else:
-            response = _post(worker["url"].rstrip("/") + "/v1/chat/completions", {
+            request = {
                 "model": worker["model"], "messages": messages, "tools": tools,
                 "tool_choice": "auto", "max_tokens": int(job.get("max_tokens", 1400)),
                 "temperature": 0.2, "stream": False,
-            }, timeout=300)
+            }
+            response = _post(worker["url"].rstrip("/") + "/v1/chat/completions", request, timeout=300)
+            generations.append(response_evidence(response, request))
             pending = response["choices"][0]["message"]
             if not pending.get("tool_calls"):
-                return {"choices": [{"message": {"content": pending.get("content") or ""}}]}
+                save()
+                return {"choices": [{"message": {"content": pending.get("content") or ""}}],
+                        "generations": generations}
             messages.append(pending)
-            dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds})
+            save()
         existing = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
         for tool in pending["tool_calls"]:
             tid = tool["id"]
@@ -84,7 +96,8 @@ def run(dispatcher, execution_id, job, worker):
                 result = {"ok": False, "error": str(exc)[:500]}
             messages.append({"role": "tool", "tool_call_id": tid, "name": fn["name"],
                              "content": json.dumps(result)})
-            dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds})
+            save()
         rounds += 1
-        dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds})
-    return {"choices": [{"message": {"content": "Tool round limit reached; work remains in the workspace."}}]}
+        save()
+    return {"choices": [{"message": {"content": "Tool round limit reached; work remains in the workspace."}}],
+            "generations": generations, "loop_stop": "tool_round_budget"}

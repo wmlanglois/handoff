@@ -454,10 +454,24 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
             "the whole resulting file; do not retransmit it just to deliver. Run relevant checks. "
             "python_run alone is not a delivery receipt. Do not change the artifact after its "
             "final receipted mutation.".format(artifact))
-    res = agent.run(d, execution_id, job, {"url": w["url"], "model": w["model"],
-                                        "ctx": w.get("ctx", 8192), "slots": 2})
-    for index, evidence in enumerate(res.get("generations", [])):
-        emit("generation", index=index, evidence=evidence)
+    # Stop-reason evidence must be recorded whether the loop RETURNS or RAISES. The length-stop and
+    # context-capacity exits raise, and those are exactly the cases the architect needs to see (ADJUST
+    # is refused without recorded length-limited turns); emitting only on return lost all of it,
+    # observed live. Only this call's turns are emitted: a resumed conversation carries earlier ones.
+    _seen = len(((d.checkpoint(execution_id) or {}).get("generations")) or [])
+
+    def _emit_generations(generations):
+        for index, evidence in enumerate(list(generations or [])[_seen:], start=_seen):
+            emit("generation", index=index, evidence=evidence)
+
+    try:
+        res = agent.run(d, execution_id, job, {"url": w["url"], "model": w["model"],
+                                            "ctx": w.get("ctx", 8192), "slots": 2})
+    except RuntimeError as exc:
+        _emit_generations((d.checkpoint(execution_id) or {}).get("generations"))
+        emit("tool_loop_stop", reason=str(exc)[:200])
+        raise
+    _emit_generations(res.get("generations"))
     if res.get("loop_stop"):
         emit("tool_loop_stop", reason=res["loop_stop"])
     content = (res["choices"][0]["message"].get("content") or "").strip()

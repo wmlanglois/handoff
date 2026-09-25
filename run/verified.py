@@ -1502,12 +1502,18 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
                             transform=first_code_block if named else None,
                             transform_name="first_code_block" if named else None)
         delivery = getattr(hooks.worker, "delivery_failure", "") or ""
+        # `reason` feeds the recurrence tracker below (`if not oracle_ok`). It was assigned only in
+        # the oracle-failed branch, so a DELIVERY failure (no usable file) with a failing oracle --
+        # the single most common local-model outcome -- reached the tracker with `reason` unbound and
+        # crashed the whole run with UnboundLocalError. Give every not-oracle_ok path a reason.
+        reason = ""
         if delivery:
             # A blank file, a missing fence, or a tool-limit is not a wrong answer. Do not ask the
             # worker to satisfy an assertion about content that was never written.
             note = "(delivery failure; skeptic not asked)"
             ruling = ("REDO -- no deliverable was written ({0}). Return the complete file in one "
                       "fenced block. Narration is not the file.").format(delivery)
+            reason = "delivery failure: " + str(delivery)
         elif oracle_ok:
             note = hooks.skeptic(rnd, output, review_root)
             ruling = hooks.judge(rnd, output, note)

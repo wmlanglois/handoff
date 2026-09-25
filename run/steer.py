@@ -33,13 +33,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+
+def _runs_dir():
+    """The run-state root (FLEET_RUNS_DIR aware) -- the same one the verified writer uses."""
+    import fleet
+    return fleet.runs_root()
+
 PERSIST, CHANGE_STRATEGY, REDIRECT, PARK_IT, AWAIT_HUMAN = (
     "persist", "change_strategy", "redirect", "park", "await_human")
 SPIRAL_AFTER = 2            # repairs (or non-investigating decisions) without movement
 
 
 def _index_rows(runs_root):
-    p = Path(runs_root or (ROOT / "runs")) / "queue" / "index.jsonl"
+    p = Path(runs_root or _runs_dir()) / "queue" / "index.jsonl"
     rows = []
     if p.exists():
         for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -53,7 +59,7 @@ def _index_rows(runs_root):
 def _run_record(runs_root, run_id, runs=None):
     if runs is not None:
         return runs.get(run_id) or {}
-    p = Path(runs_root or (ROOT / "runs")) / ("verified-" + run_id) / "result.json"
+    p = Path(runs_root or _runs_dir()) / ("verified-" + run_id) / "result.json"
     try:
         return json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):

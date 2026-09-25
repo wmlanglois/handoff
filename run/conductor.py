@@ -51,6 +51,7 @@ force_utf8()
 import goals  # noqa
 import plan as planning  # noqa
 from fleet import DEFAULT_WORKER, SKEPTIC_WORKER  # noqa
+from fleet import runs_root as fleet_runs_root  # noqa: E402  (one runs root for writer+readers)
 
 # A continuation loop with no bound is a runaway. When the goal carries no assignment budget this
 # is the backstop, chosen to be obviously finite rather than generous.
@@ -124,7 +125,7 @@ def verified_executor(max_rounds=5, timeout=1800, cards_dir=None):
 
     NOT the default, and not exercised by C's tests: Track A owns the controls that make live
     execution safe. Ask for it by name once those are proven."""
-    cards = Path(cards_dir) if cards_dir else ROOT / "runs" / "goal-cards"
+    cards = Path(cards_dir) if cards_dir else fleet_runs_root() / "goal-cards"
 
     def run(card):
         if not card.get("worker"):
@@ -152,7 +153,7 @@ def verified_executor(max_rounds=5, timeout=1800, cards_dir=None):
                 outcome = line.split("=", 1)[1].strip()
         if not outcome:
             outcome = "worker-unavailable" if r.returncode == 3 else "parked-stagnant"
-        receipt = ROOT / "runs" / f"verified-{card['name']}" / "receipt.json"
+        receipt = fleet_runs_root() / f"verified-{card['name']}" / "receipt.json"
         tail = ((r.stdout or "").strip().splitlines() or [""])[-1]
         return Execution(outcome=outcome,
                          evidence_ref=str(receipt) if receipt.exists() else "",

@@ -274,6 +274,20 @@ def registry_path():
     return _default_registry_path()
 
 
+RUNS_ENV = "FLEET_RUNS_DIR"
+
+
+def runs_root():
+    """Where run state lives: verified-<run> workspaces and receipts, goal cards, the queue, carry
+    snapshots. Resolved on every call so the WRITER (verified.run_loop) and every READER (assembly,
+    decide, orchestrate, steer, memory) agree. Before this, FLEET_RUNS_DIR was honoured by some
+    readers (orchestrate, proofloop assembly) but not by the writer, so a goal resumed under another
+    checkout recorded receipts in one tree, looked for them in the other, and reported a properly
+    bound receipt as "no bound artifact hash" -- the same reader/writer split registry_path avoids."""
+    env = os.environ.get(RUNS_ENV)
+    return Path(env) if env else ROOT / "runs"
+
+
 REGISTRY_FILE = registry_path()
 #: Why registered workers are missing or incomplete, or None. Empty file == no error: a fleet with
 #: no registrations is the normal state, and reporting it as a problem trains people to ignore this.

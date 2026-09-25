@@ -17,6 +17,12 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _runs_dir():
+    """The run-state root (FLEET_RUNS_DIR aware) -- the same one the verified writer uses."""
+    import fleet
+    return fleet.runs_root()
 sys.path.insert(0, str(ROOT / "run"))
 _WS_SAFE = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 
@@ -571,7 +577,7 @@ def stage_repair_inputs(card: dict) -> Path:
     goal_id = card.get("goal_id")
     gid = card.get("group")
     rid = card.get("run_id") or card.get("name")
-    ws = ROOT / "runs" / ("verified-" + rid)
+    ws = _runs_dir() / ("verified-" + rid)
     ws.mkdir(parents=True, exist_ok=True)
     cand = candidate_dir(goal_id, gid)
     dests = list(card.get("dests") or [])
@@ -742,7 +748,7 @@ def _bound_artifact_sha(rid: str, runs_root=None):
     identity, not a filename. From runs/verified-<rid>/receipt.json. Supports the real verified
     receipt ("evidence bound to artifact <hex>" / accepted_sha256) and the simple {sha256} form.
     None means the receipt records no binding -- then ingestion must refuse, not guess."""
-    base = Path(runs_root) if runs_root else (ROOT / "runs")
+    base = Path(runs_root) if runs_root else _runs_dir()
     try:
         rec = json.loads((base / ("verified-" + rid) / "receipt.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -771,7 +777,7 @@ def _resolve_accepted(rid: str, names, runs_root=None):
         raise IntegrateError(
             "run {0} receipt has no bound artifact hash; a PASS-only receipt is not "
             "accepted-artifact evidence".format(rid))
-    ws = (Path(runs_root) if runs_root else (ROOT / "runs")) / ("verified-" + rid)
+    ws = (Path(runs_root) if runs_root else _runs_dir()) / ("verified-" + rid)
     tool_ws = _tool_workspace(rid)
     roots = [ws] + ([Path(tool_ws)] if tool_ws else [])
     seen = {}
@@ -829,7 +835,7 @@ def ingest_repair(goal_id: str, assignment: str, run_id: str | None = None) -> d
     if not cand.is_dir():
         _copytree(live_dir(goal_id), cand)
     rid = run_id or rec.get("run_id") or assignment
-    ws = ROOT / "runs" / ("verified-" + rid)
+    ws = _runs_dir() / ("verified-" + rid)
     dests = list(con.get("dests") or ([con.get("dest")] if con.get("dest") else []))
     applied = []
     stop_reason = None

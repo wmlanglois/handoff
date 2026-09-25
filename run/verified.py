@@ -53,6 +53,7 @@ force_utf8()                    # non-cp1252 model/authority text must not crash
 import call as call_layer        # noqa  -- the provenance register lives there
 from call import chat            # noqa
 from fleet import SKEPTIC_WORKER  # noqa
+from fleet import runs_root as fleet_runs_root  # noqa: E402  (one runs root for writer+readers)
 import evidence                  # noqa  -- acceptance must present a sealed record
 from loop_config import LOOP as _LOOP  # noqa  -- single source for loop policy
 from log import logger          # noqa
@@ -1863,7 +1864,7 @@ def main():
         authority_evidence = frozenset(f"retrieval:{i}" for i, _ in units)
         print(f"  retrieved authority: {len(authority)} chars from regdb/scout")
     emit = logger(f"verified-{name}")
-    ws = ROOT / "runs" / f"verified-{name}"; ws.mkdir(parents=True, exist_ok=True)
+    ws = fleet_runs_root() / f"verified-{name}"; ws.mkdir(parents=True, exist_ok=True)
     print(f"verified job '{name}' worker={worker}  ->  ws:{ws}  log:{emit.path}")
     staged = stage_skills(card, ws, emit)
     if staged:

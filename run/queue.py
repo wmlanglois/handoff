@@ -25,11 +25,12 @@ sys.path.insert(0, str(ROOT)); sys.path.insert(0, str(ROOT / "check"))
 from safeio import force_utf8  # noqa
 force_utf8()
 from fleet import WORKERS  # noqa
+from fleet import runs_root as fleet_runs_root  # noqa: E402  (one runs root for writer+readers)
 from loop_config import LOOP as _LOOP  # noqa  -- single source for timing invariants
 import watchdog  # noqa
 from state_lock import exclusive_file
 
-Q = ROOT / "runs" / "queue"
+Q = fleet_runs_root() / "queue"
 DIRS = {s: Q / s for s in ("ready", "running", "done", "review", "parked", "failed")}
 INDEX = Q / "index.jsonl"
 LEASES = Q / "leases"

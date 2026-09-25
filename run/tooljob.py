@@ -42,6 +42,30 @@ def load_agent():
     return module
 
 
+#: Needed for tools mode to work and be diagnosable: a cut-off turn must not be executed or silently
+#: end the job, stop reasons must be recorded, and a file larger than one turn must be buildable.
+REQUIRED_TOOL_CAPABILITIES = ("length_recovery", "generation_evidence", "incremental_files")
+
+
+def runtime_info(agent=None):
+    """Which tool runtime will run tool jobs, and what it declares it can do. Never raises.
+    Pass the already-loaded module to avoid loading an external runtime twice."""
+    root = Path(setting("FLEET_DISPATCH_DIR", str(ROOT / "tool_runtime")))
+    try:
+        bundled = root.resolve() == (ROOT / "tool_runtime").resolve()
+    except OSError:
+        bundled = False
+    info = {"kind": "bundled" if bundled else "external", "path": str(root)}
+    try:
+        caps = tuple(getattr(agent if agent is not None else load_agent(), "CAPABILITIES", ()) or ())
+    except Exception as e:
+        info.update(capabilities=[], missing=list(REQUIRED_TOOL_CAPABILITIES), error=repr(e)[:200])
+        return info
+    info.update(capabilities=sorted(caps),
+                missing=[c for c in REQUIRED_TOOL_CAPABILITIES if c not in caps])
+    return info
+
+
 def workspace_dir(workspace_id):
     """Where the configured tool-service writes this job's artifacts."""
     root = setting("FLEET_DISPATCH_DIR", str(ROOT / "tool_runtime"))
@@ -376,6 +400,9 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
     import hashlib
     agent = load_agent()                      # fails here, by name, if the dependency is unset
     emit = logger(f"tooljob-{workspace_id}")
+    _rt = runtime_info(agent)
+    emit("tool_runtime", kind=_rt["kind"], path=_rt["path"], capabilities=_rt.get("capabilities"),
+         missing=_rt.get("missing"))
     ckpt = _ckpt_path(workspace_id, attempt, lineage)
     d = _Dispatch(emit, ckpt_path=ckpt)
     # A distinct external execution identity per attempt: the conversation for this attempt is read

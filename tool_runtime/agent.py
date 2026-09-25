@@ -10,6 +10,10 @@ from pathlib import Path
 import urllib.request
 from generation import response_evidence
 
+#: What this runtime implements. tooljob records it per job and preflight refuses a tools-mode run
+#: on a runtime missing the required ones, so a less capable runtime is never used silently.
+CAPABILITIES = ("length_recovery", "generation_evidence", "incremental_files", "context_check")
+
 
 def _post(url, payload, token=None, timeout=120):
     headers = {"Content-Type": "application/json"}

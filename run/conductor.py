@@ -1323,6 +1323,11 @@ def _cmd_autonomous(a):
         import fleet as _fleet
         for _k, _v in _fleet.state_paths().items():
             print("state {0:9} {1}".format(_k + ":", _v))
+        for _r in pf_rows:
+            if _r.get("role") == "tool-runtime":
+                print("tool runtime: {0} at {1} ({2}){3}".format(
+                    _r.get("kind"), _r.get("path"), ", ".join(_r.get("capabilities") or []) or "no declared capabilities",
+                    "; MISSING " + ", ".join(_r["missing"]) if _r.get("missing") else ""))
         if not ok:
             print("PREFLIGHT FAILED: " + reason)
             print("  fix the fleet, or re-run with --skip-preflight to bypass.")

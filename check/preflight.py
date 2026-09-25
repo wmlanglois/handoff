@@ -18,7 +18,7 @@ runner, not here; preflight is the between-iterations idle check.
     python check/preflight.py            # all workers
     python check/preflight.py --canary-timeout 30
 """
-import argparse, json, sys, time, urllib.request
+import argparse, json, os, sys, time, urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -105,6 +105,15 @@ def probe_tool_service(emit):
         emit("tool-service-down", url=TOOL_SERVICE["url"], error=repr(e))
         return {"tool_service": "down"}
 
+def tool_runtime_info():
+    """Which tool runtime tool jobs will use and what it declares (see run/tooljob.runtime_info)."""
+    run_dir = str(Path(__file__).resolve().parent.parent / "run")
+    if run_dir not in sys.path:
+        sys.path.insert(0, run_dir)
+    import tooljob
+    return tooljob.runtime_info()
+
+
 def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True):
     """Non-exiting preflight for one run. Returns (ok, reason, rows).
 
@@ -150,6 +159,13 @@ def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True):
         ts = probe_tool_service(emit)
         if ts["tool_service"] not in ("ok",):
             reasons.append("tool-service: {0}".format(ts["tool_service"]))
+        rt = tool_runtime_info()
+        rows.append({"worker": "(tool-runtime)", "role": "tool-runtime",
+                     "verdict": "ok" if not rt.get("missing") else "degraded", **rt})
+        if rt.get("missing") and not os.environ.get("HANDOFF_ALLOW_DEGRADED_TOOL_RUNTIME"):
+            reasons.append("tool-runtime: {0} runtime at {1} lacks {2}; use the bundled runtime (unset "
+                           "FLEET_DISPATCH_DIR) or set HANDOFF_ALLOW_DEGRADED_TOOL_RUNTIME=1 to accept it"
+                           .format(rt.get("kind"), rt.get("path"), ", ".join(rt["missing"])))
     else:
         rows.append({"worker": "(tool-service)", "role": "tool-service", "verdict": "not-needed"})
     return (not reasons), "; ".join(reasons), rows

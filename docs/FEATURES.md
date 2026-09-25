@@ -6,6 +6,8 @@ This page is the callable surface. Each heading is an exact command a search can
 
 Nothing here is a claim that an unattended night succeeds. The [known limitations](../README.md#known-limitations) still apply.
 
+The [implementation status](IMPLEMENTATION-STATUS.md) separates shipped fixes from open connections and dated research proposals (source baseline: `221f434`, September 25, 2026).
+
 ## What a prolonged run is allowed to end on
 
 Walkaway means an approved goal keeps producing checked work across many turns without a person carrying the next instruction. A status sentence, a red adversarial test, or one trivial failure is not that ending.
@@ -14,7 +16,7 @@ These ends are deliberate:
 
 - Scope approval and assignment approval. `start` stops before either is skipped.
 - A never-rule from intake S4 or E4. The assignment is parked. It is not dispatched.
-- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. `C` runs until done or stuck; `D` runs overnight. Overnight (`D`) still stops at the plan and map approval gates unless `autonomous --delegate` pre-approves them; the cadence letter governs how often the running loop pauses to show a draft, not the approval gates. The selected letter is honored within the approved budget regardless of Q0 (domain). Q0 does not cap autonomy. The letter is not a worker count.
+- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. `C` runs until done or stuck; `D` is labeled overnight but currently uses the same review-pause behavior as C. Neither grants standing approval or starts later milestones. `autonomous --delegate` separately covers existing scope, plan, and derived-map approvals. Q0 does not cap autonomy. The letter is not a worker count.
 - `--stagnation-k` on `verified.py`: consecutive rounds with no achievement and no new evidence.
 - `--investigation-budget` on `verified.py`: evidence keeps arriving and achievement never does.
 - An architect action, one of nine: `REPAIR`, `FOLLOWON`, `PARK`, `STOP`, `INVESTIGATE`, `REVISIT`, `PROPOSAL`, `QUESTION`, `CHALLENGE`.
@@ -92,11 +94,15 @@ Sends an unapproved proposed plan back to the planner on the same goal. Records 
 
 Packet-only mode dispatches the approved plan and stops; **packet completion is not project completion**. Autonomous mode adds one connected proof: approved full `scoped.md` → approved interface map → receipt-bound candidate → one fresh-process launch journey → one owned, evidence-based repair if needed → a promoted checkpoint. The reusable entry point is `run/conductor.py`.
 
-`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME] [--plan-file PATH] [--delegate NAME]`
+`python run/conductor.py autonomous <package> --decisions N --seconds N [--workers NAMES] [--map FILE --as NAME] [--plan-file PATH] [--delegate NAME] [--skip-preflight]`
 
-`--decisions` and `--seconds` are required integers. `--workers` is a comma-separated list of worker names. Default is `cluster`. `--plan-file` is a JSON object with an `outcomes` list of contracts; when given, the ordinary planner proposes that pre-written plan instead of calling the model, and it is still gated, human-approved and mapped through the same path (a rejected supplied plan is reported, not model-replaced). `--map` is a JSON file and is accepted only together with `--as`. The file is one object: `components` is a list of `{id, path, provides, calls?}`, and `milestone` is `{id, command}` where `command` is a list of strings, the first usually the Python executable and the last the launcher path. A person can skip `--map` and approve the derived map with `approve-map --from-proposed` instead.
+`--decisions` and `--seconds` are required integers. `--workers` is a comma-separated list of worker names; when omitted the configured `PRIMARY_WORKER` is used (`cluster` if unset). `--plan-file` is a JSON object with an `outcomes` list of contracts; at the planning stage it supplies the proposal instead of calling the model. It is still gated, approved interactively or under delegation, and mapped through the same path. A rejected supplied plan is reported, not model-replaced; the flag does not replace an already-approved plan and does not compile a Markdown backlog. `--map` is a JSON file and is accepted only together with `--as`. The file is one object: `components` is a list of `{id, path, provides, calls?}`, and `milestone` is `{id, command}` where `command` is a list of strings, the first usually the Python executable and the last the launcher path. A person can skip `--map` and approve the derived map with `approve-map --from-proposed` instead.
 
-Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately from the North Star, and sets autonomous mode with a durable budget. One entry walks the ordinary path with a human stop at each consequential step: from a freshly approved scope with no plan it runs the ordinary planner and stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE` when the intake done-when answers are not in yet); once the plan is approved it derives and proposes an interface map and stops at `AWAITING_MAP_APPROVAL`; once the map is approved it runs. `--delegate NAME` runs unattended (overnight): the operator pre-approves the proposed plan and the derived map as NAME's standing approval, and the loop proceeds without stopping at the gates. This is the operator's explicit up-front approval, not a silent one; the budget, the never-rules, and consequential sign-offs remain hard bounds. Without `--delegate` it never silently approves a plan or a map. With no approved map the loop stops `BLOCKED`. `--decisions 0` is a visible choice, never a hidden zero.
+Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately, and sets autonomous mode with a durable budget. Without delegation, the ordinary path stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE`), then `AWAITING_MAP_APPROVAL`, then permits execution after approval. `--delegate NAME` records standing approval of an **existing** scope page, the proposed plan, and the derived map. It does not generate missing intake/scope or waive budgets, never-rules, or human-only sign-offs. Delegated resume also handles an already-proposed map: while no approved map exists, the map is derived from the current approved plan and an outdated proposal is replaced before approval. Failed derivation returns `MAP_DERIVATION_FAILED`, not dispatch. An already-approved stale map still fails the execution validity check. `--decisions 0` is a visible choice, never a hidden zero.
+
+Before `run_goal`, default preflight canaries the selected coding lanes and named skeptic and checks the tool service. A failure returns `PREFLIGHT_FAILED`. An explicitly empty `SKEPTIC_WORKER` produces a no-independent-review warning, rather than silently omitting the role. `--skip-preflight` or any nonempty `HANDOFF_SKIP_PREFLIGHT` bypasses this entire check (even the string `0` is nonempty); this is a diagnostic escape hatch, not evidence that the environment works. The service check is currently unconditional in this gate, including non-tool plans. Preflight is not automatically run by `start` before intake/planning.
+
+This is one goal's connected execution loop, not a durable controller over an entire multi-milestone backlog. That remaining connection is [#7](https://github.com/wmlanglois/handoff/issues/7); Markdown import is [#21](https://github.com/wmlanglois/handoff/issues/21).
 
 The recorded time and decision budgets are cumulative across resume and restart. A repeated `autonomous` command does not reset them. A `BUDGET` stop reports what remains. Time is charged from a persisted active marker, including the gap after a crash, in whole seconds. A failed spend write stops the loop. Admitting a journey repair spends one decision. If the ledger also has `run_budget.repairs`, that ceiling stops new repairs on its own. There is no `autonomous` flag for the repair ceiling. An in-flight worker is left to finish.
 
@@ -126,7 +132,7 @@ Prints where the goal stands, including whether `complete()` is true.
 
 `python run/conductor.py fingerprint [--expect HASH]`
 
-Prints a hash of the controller source (the `run/` package). Capture it before a live or evaluation run and pass it back with `--expect`; the command exits non-zero if the harness changed, so a wrapper can refuse to continue. This addresses a run being edited under itself: give each concurrent session its own checkout (a separate git worktree), and do not edit the harness while a run is in flight.
+Prints a hash of Python source under `run/`. Capture it before a live or evaluation run and pass it back to this command with `--expect`; it exits non-zero on a mismatch. It does not cover root runtime modules or automatically run at dispatch, and is not an execution lock. Give concurrent sessions separate checkouts and do not edit a live runtime; enforced stability is still #9.
 
 `python run/conductor.py memory <action> [flags]`
 
@@ -255,6 +261,12 @@ Library entry is `repair_loop`. Bare execution prints help. `--demo` shows oscil
 
 ## Registry, architect, skeptic
 
+`python run/registry.py connect [--url URL ...] [--no-register] [--no-recheck]`
+
+Separate setup helper: discover common local server ports, qualify/register new endpoints, and re-canary saved workers. `--url` is repeatable and replaces the default discovery list. `--no-register` suppresses new registrations, but saved workers are still rechecked unless `--no-recheck` is also set. A new qualification or successful saved-worker check establishes endpoint readiness; saved entries alone do not. Unchecked saved entries are reported as unverified. Discovery alone does not qualify a model or select primary/skeptic roles. Role settings remain explicit in `fleet_settings.local.py`; `start` does not yet perform this setup for you.
+
+Set `FLEET_REGISTRY` before these commands for project-local storage. Otherwise the per-user registry is shared across clones. The committed `workers.example.json` uses `version: 1` and a `workers` object; its non-reserved placeholder names must match the selected roles. Validate configured models before dispatch; a copied sample is not qualification evidence.
+
 `python run/registry.py add <url> [--name NAME] [--model MODEL] [--force] [--ctx N] [--max-inflight N] [--supports-gbnf] [--prefill-lock] [--reasoning-style none|template_kwargs|budget_field]`
 
 Qualifies a running OpenAI-style server and registers it. `--force` replaces an existing name.
@@ -293,9 +305,13 @@ Library used by the runners. It is not a help-stable command. Do not pass `--hel
 
 `python check/preflight.py [--canary-timeout SECONDS]`
 
+Standalone environment diagnostic; canary probes spend model tokens. The autonomous command separately calls its run-specific gate before dispatch. The standalone command scans configured workers and the tool service; it is not required to defer/open intake.
+
 `python check/watchdog.py [--workers NAMES] [--gen-timeout SECONDS] [--loop SECONDS] [--patches]`
 
 `--loop 0` is one pass. `--patches` asserts the cluster's MLX patches are active. That check is about one lab, not a portable requirement.
+
+Liveness protections include generation canaries, request socket timeouts, and the queue subprocess timeout. `call.py` additionally tracks generated-token progress on the prefill-lock streaming path; this is not a universal independent heartbeat. A client timeout does not prove a server stopped executing. Do not assume immediate duplicate dispatch or automatic recovery on every transport.
 
 `python check/recency.py <query> [--days N] [--limit N]`
 
@@ -318,6 +334,7 @@ The development checkout has a private test suite. This code-only publication do
 | `FLEET_RUNS_DIR` | Directory for `verified-<run_id>` workspaces and goal-card files. Default `runs/`. |
 | `FLEET_SPARK_LIVE` | `1` calls the `spark` worker from the journey review. Any other value, including unset, records the finding `none found` and does not call a model. |
 | `FLEET_REGISTRY` | Path of the worker registry file. Unset uses the per-user state directory. |
+| `HANDOFF_SKIP_PREFLIGHT` | Any nonempty value skips the entire autonomous pre-dispatch preflight. Unset for normal validation; `0` still skips it. |
 
 Settings keys in `fleet_settings.example.py`: `MAC_USER`, `MAC_LOCALAI`, `MAC48`, `MAC24`, `SSH_KEY`, `MINER_HOST`, `CLUSTER_MODEL`, `PRIMARY_WORKER`, `SKEPTIC_WORKER`, `TOOL_SERVICE_URL`, `TOOL_SERVICE_TOKEN_FILE`, `FLEET_DISPATCH_DIR`, `RECENCY_ROOTS`. For a registered generic endpoint, the gitignored local file needs only `PRIMARY_WORKER` and `SKEPTIC_WORKER` naming registered workers; do not copy the Mac/miner placeholders. `MAC48` and `MAC24` name lab-specific machines. The bundled service uses `runs/tool-service/token.txt` by default; `FLEET_DISPATCH_DIR` is only an override.
 
@@ -335,5 +352,9 @@ Private project data, generated runs, domain-specific corpora and adapters, and 
 ## Not built yet
 
 These are directions, not commands.
+
+- Complete guided connection/role setup ([#11](https://github.com/wmlanglois/handoff/issues/11)) and delegated generation of a missing scope from confirmed intake ([#13](https://github.com/wmlanglois/handoff/issues/13)).
+- Planning all authorized seeded criteria ([#6](https://github.com/wmlanglois/handoff/issues/6)), Markdown-backlog compilation ([#21](https://github.com/wmlanglois/handoff/issues/21)), and durable delegated cross-milestone continuation ([#7](https://github.com/wmlanglois/handoff/issues/7)).
+- Enforced stable execution code across controller/subprocesses ([#9](https://github.com/wmlanglois/handoff/issues/9)); the fingerprint command is a manual diagnostic over `run/`, not a lock or complete runtime identity.
 
 - Never-rules do not sandbox the process. They refuse acceptance when the emitted source text matches the rule. A worker can still be stopped only after that text exists.

@@ -1,5 +1,7 @@
 # Research Notes on Automation: Breaking the Reporter Trap in Autonomous Local-LLM Loops
 
+> September 25 implementation note: these hypotheses and proposals are preserved, not presented as shipped features or demonstrated benefits. [Current implementation status](IMPLEMENTATION-STATUS.md) connects the findings to open planning, backlog, and continuation work. For execution, use the [README](../README.md), not historical prompt/configuration examples in this research note.
+
 *Working notes for the fleet harness. Status: research consolidation + design proposal. Nothing here is
 settled; the point of writing it down is to be argued with.*
 

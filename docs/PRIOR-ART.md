@@ -1,5 +1,7 @@
 # Prior art vs. this harness
 
+> September 25 implementation note: this September 19 comparison is preserved as a historical research snapshot. Its statements about what is wired are not current release status. See [implementation status and issue mapping](IMPLEMENTATION-STATUS.md) and [operator commands](FEATURES.md) for current behavior. External comparisons below were not re-verified by this documentation reconciliation.
+
 *Comparison written 2026-09-19 against four research lanes that harvested local-LLM orchestration
 projects. Every claim about **us** cites a file in this repo that was read to make it. Every claim
 about **them** cites the URL the lane fetched it from.*

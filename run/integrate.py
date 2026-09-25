@@ -7,6 +7,7 @@ last live checkpoint and dispatch bounded repair through the queue/tool-worker p
 from __future__ import annotations
 
 import hashlib
+import ast
 import re
 import json
 import os
@@ -48,53 +49,66 @@ def assertion_lines(source: str) -> list:
     return [ln.strip() for ln in _ASSERT_LINE.findall(source or "")]
 
 
-_TRUTHY_LITERAL = re.compile(r"""^(?:True|[1-9][0-9]*(?:\.[0-9]+)?|"[^"]+"|'[^']+')$""", re.I)
-# `... or True` / `... or 7` (string contents are blanked before these run, so a literal
-# like `== "x or True"` is not mistaken for a tautology).
-_OR_TRUTHY = re.compile(r"""\bor\s+(?:True|[1-9][0-9]*(?:\.[0-9]+)?)(?=\s|$|\)|:)""", re.I)
-_TRUTHY_OR = re.compile(r"""(?:^|\()\s*(?:True|[1-9][0-9]*(?:\.[0-9]+)?)\s+or\b""", re.I)
-_LITERAL_TRUE = {"true", "true == true", "1", "1 == 1", "pass"}
+_CMP_OPS = {ast.Eq: lambda a, b: a == b, ast.NotEq: lambda a, b: a != b,
+            ast.Lt: lambda a, b: a < b, ast.LtE: lambda a, b: a <= b,
+            ast.Gt: lambda a, b: a > b, ast.GtE: lambda a, b: a >= b}
 
 
-def _assert_condition(line: str) -> str:
-    """The condition expression of an `assert` line, with any trailing message removed."""
-    s = str(line or "").strip()
-    if not re.match(r"assert\b", s, re.I):
-        return ""
-    s = s[len("assert"):].strip().rstrip(";")
-    depth = 0
-    inq = None
-    for i, ch in enumerate(s):
-        if inq:
-            if ch == inq and s[i - 1] != "\\":
-                inq = None
-            continue
-        if ch in "\"'":
-            inq = ch
-        elif ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            return s[:i].strip()
-    return s.strip()
+def _static_value(node):
+    """(known, value) for an expression built only from literals -- names, calls and attributes are
+    unknown, so nothing that touches the artifact is ever evaluated and nothing is executed."""
+    if isinstance(node, ast.Constant):
+        return True, node.value
+    if isinstance(node, ast.BoolOp):
+        parts = [_static_value(v) for v in node.values]
+        if isinstance(node.op, ast.Or) and any(k and bool(v) for k, v in parts):
+            return True, True          # `x or True` is truthy whatever x is
+        if isinstance(node.op, ast.And) and any(k and not bool(v) for k, v in parts):
+            return True, False         # `x and False` is falsy whatever x is
+        if all(k for k, _ in parts):
+            return True, parts[-1][1]  # Python returns the last operand here
+        return False, None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        k, v = _static_value(node.operand)
+        return (True, not v) if k else (False, None)
+    if isinstance(node, ast.Compare) and all(type(op) in _CMP_OPS for op in node.ops):
+        k, left = _static_value(node.left)
+        if not k:
+            return False, None
+        for op, right_node in zip(node.ops, node.comparators):
+            k, right = _static_value(right_node)
+            if not k:
+                return False, None
+            try:
+                if not _CMP_OPS[type(op)](left, right):
+                    return True, False
+            except TypeError:
+                return False, None
+            left = right
+        return True, True
+    return False, None
 
 
 def assert_can_fail(line: str) -> bool:
-    """False when an `assert` line is tautological by construction -- a bare truthy literal, a
-    literal identity (`1 == 1`), or an `or`-disjunction with a truthy-literal operand
-    (`... or True`, `True or ...`) -- so it can never fail on a wrong artifact. Real assertions
-    (comparisons, variable disjunctions, existence checks like `os.path.exists(...)`) return True."""
-    cond = _assert_condition(line)
-    if not cond:
+    """False only when an `assert` line provably cannot fail on a wrong artifact: its test is built
+    from literals and is truthy (`assert True`, `assert 1 == 1`, `assert "x"`), or it is an `or`
+    with a truthy literal operand (`... or True`, `True or ...`). Parsed with `ast`, never executed.
+    `value == 42 or 1 == 2` CAN fail (1 == 2 is false), so it is a real check -- an earlier regex
+    version wrongly rejected it. Comparisons, variable disjunctions and existence checks
+    (`os.path.exists(...)`) are real checks. A line that does not parse is not judged vacuous here;
+    it fails loudly when the check runs."""
+    s = str(line or "").strip().rstrip(";")
+    if not s.startswith("assert"):
         return False
-    flat = re.sub(r"\s+", " ", cond).strip()
-    if flat.lower() in _LITERAL_TRUE or _TRUTHY_LITERAL.match(flat):
+    try:
+        tree = ast.parse(s)
+    except SyntaxError:
+        return True
+    stmt = tree.body[0] if tree.body else None
+    if not isinstance(stmt, ast.Assert):
         return False
-    blanked = re.sub(r"\"[^\"]*\"|'[^']*'", '""', flat)  # neutralize string contents
-    if _OR_TRUTHY.search(blanked) or _TRUTHY_OR.search(blanked):
-        return False
-    return True
+    known, value = _static_value(stmt.test)
+    return not (known and bool(value))
 
 
 def vacuous_oracle(oracle) -> bool:

@@ -629,9 +629,14 @@ def connect(urls=None, *, path=None, register_found=True, recheck=True,
             except (Unqualified, ValueError) as e:
                 failed.append({"url": url, "label": labels.get(url, ""),
                                "error": "advertises models but did not qualify: {0}".format(e)})
-    usable = bool(saved) or bool(registered)
+    # Ready means something ANSWERED: a newly qualified endpoint, or a saved worker whose live
+    # re-canary returned ok. A saved-but-down worker is configuration, not readiness. Without a
+    # recheck the saved workers are reported as unverified, never as ready.
+    healthy = [s["name"] for s in saved if (s.get("health") or {}).get("ok") is True]
+    unverified = [s["name"] for s in saved if "health" not in s]
+    usable = bool(registered) or bool(healthy)
     return {"saved": saved, "found": found, "registered": registered, "failed": failed,
-            "usable": usable}
+            "healthy": healthy, "unverified": unverified, "usable": usable}
 
 
 def main(argv=None):
@@ -679,14 +684,22 @@ def main(argv=None):
             print(f"  registered {r['name']:<18} {_safe(r['url'])[:34]:<34} model={_safe(r['model'])[:24]}")
         for f in rep["failed"]:
             print(f"  no model   {(f['label'] or f['url']):<18} {_safe(f['url'])[:34]:<34} {f['error']}")
+        if not rep["usable"] and rep["unverified"]:
+            print("\n  Saved workers were not re-checked (--no-recheck), so readiness is UNVERIFIED: "
+                  + ", ".join(rep["unverified"]) + ". Re-run without --no-recheck.")
+            return 1
         if not rep["usable"]:
+            if rep["saved"]:
+                print("\n  Saved workers did not answer a live canary: "
+                      + ", ".join(s["name"] for s in rep["saved"]) + ".")
             print("\n  No working model found. Start one, then re-run `registry.py connect`:")
             print("    LM Studio  ->  Developer tab, Start Server   (http://localhost:1234)")
             print("    llama.cpp  ->  llama-server -m your-model.gguf --port 8080")
             print("    Ollama     ->  ollama serve                  (http://localhost:11434)")
             print("  Or point at a specific address:  registry.py connect --url http://HOST:PORT")
             return 1
-        print(f"\n  ready: {len(rep['saved'])} saved, {len(rep['registered'])} newly registered.")
+        print(f"\n  ready: {len(rep['healthy'])} saved worker(s) answered, "
+              f"{len(rep['registered'])} newly registered.")
         print(f"  stored in {fleet.registry_path()}")
         return 0
 

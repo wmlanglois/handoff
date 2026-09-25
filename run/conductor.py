@@ -1236,13 +1236,20 @@ def _cmd_autonomous(a):
                 print("  or run unattended:  add --delegate <you> to pre-approve the plan and map")
                 print("then re-run the same autonomous command to derive and approve the interface map.")
                 return {"stop": "AWAITING_PLAN_APPROVAL", "goal_id": gid, "proposed": doc["proposed"]}
-        # MAP stop: plan approved, no map -> derive and PROPOSE a map; a person approves it, unless a
-        # standing --delegate pre-authorizes this run.
-        if (doc.get("approved") and doc.get("assignments")
-                and not (doc.get("proposed_map") or {}).get("spec")):
+        # MAP stop: plan approved, no APPROVED map -> derive the map from the CURRENT approved plan and
+        # propose it; a person approves it, unless a standing --delegate pre-authorizes this run.
+        # This also runs when a proposal already exists (a normal run proposed it and paused): an
+        # earlier version skipped the whole block then, so a later --delegate resume dispatched with no
+        # approved map. A recorded proposal that no longer matches the current plan is stale and is
+        # replaced, never approved.
+        if doc.get("approved") and doc.get("assignments"):
             spec = derive_map_spec(gid)
-            if spec:
+            if not spec:
+                print("could not derive an interface map from the approved plan; not dispatching.")
+                return {"stop": "MAP_DERIVATION_FAILED", "goal_id": gid}
+            if spec != (doc.get("proposed_map") or {}).get("spec"):
                 goals.propose_interface_map(gid, spec)
+            if spec:
                 if delegate:
                     goals.approve_interface_map(gid, spec, delegate, fixture=False)
                     print("interface map AUTO-APPROVED by standing delegate {0}.".format(delegate))
@@ -1261,11 +1268,14 @@ def _cmd_autonomous(a):
     # existing check/preflight probes; --skip-preflight (or HANDOFF_SKIP_PREFLIGHT) bypasses it.
     if not (getattr(a, "skip_preflight", False) or os.environ.get("HANDOFF_SKIP_PREFLIGHT")):
         import preflight
-        ok, reason, _rows = preflight.gate(workers)
+        ok, reason, pf_rows = preflight.gate(workers)
         if not ok:
             print("PREFLIGHT FAILED: " + reason)
             print("  fix the fleet, or re-run with --skip-preflight to bypass.")
             return {"stop": "PREFLIGHT_FAILED", "reason": reason}
+        if any(r.get("verdict") == "not-configured" and r.get("role") == "skeptic" for r in pf_rows):
+            print("WARNING: no skeptic configured (SKEPTIC_WORKER is empty) -- this run has no "
+                  "independent review of worker output.")
     summary = orchestrate.run_goal(gid, workers, max_seconds=int(a.seconds),
                                    max_decisions=int(a.decisions))
     print("STOP: {0} -- {1}".format(summary["stop"], summary.get("reason")))

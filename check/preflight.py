@@ -112,7 +112,12 @@ def gate(worker_names, canary_timeout=25, emit=None):
     coding lanes, so a dead/missing skeptic would otherwise pass) plus the tool-service. `reason`
     names every concrete failure -- which lane and its verdict (unreachable/locked/empty/
     no-toolcall/unconfigured), a missing skeptic, or a down tool-service -- so a run refuses up
-    front with a specific cause instead of dying at dispatch. A reachable port is not health."""
+    front with a specific cause instead of dying at dispatch. A reachable port is not health.
+
+    Skeptic policy (README: the skeptic is optional): a NAMED skeptic that is missing or broken
+    fails the gate like any lane. An EMPTY SKEPTIC_WORKER is an explicit opt-out: it passes, but a
+    `not-configured` skeptic row is returned so the caller can say the run has no independent
+    review -- it is never silently omitted."""
     if emit is None:
         emit = lambda *a, **k: None  # noqa: E731
     names = [n for n in (worker_names or []) if n]
@@ -134,6 +139,8 @@ def gate(worker_names, canary_timeout=25, emit=None):
         rows.append(r)
         if r.get("verdict") != "ok":
             reasons.append("{0}: {1}".format(n, r.get("verdict")))
+    if not SKEPTIC_WORKER:
+        rows.append({"worker": "(skeptic)", "role": "skeptic", "verdict": "not-configured"})
     ts = probe_tool_service(emit)
     if ts["tool_service"] not in ("ok",):
         reasons.append("tool-service: {0}".format(ts["tool_service"]))

@@ -400,6 +400,49 @@ def reclaim_orphans(fresh=None):
         requeued.append(name + ".json")
     return requeued, skipped
 
+def recover_dispatched(older_than_s=None):
+    """OPERATOR-INVOKED recovery of DISPATCHED running records, which reclaim_orphans deliberately
+    leaves (a dead local controller alone does not prove a remote call stopped). Before this there was
+    no recovery at all: such a record blocked its job forever, because a new claim refuses to promote
+    on top of an existing record -- an interrupted goal could never finish.
+
+    A record is recovered only when BOTH hold:
+      * its owner is provably stopped (same host, pid gone -- see lease_owner_stopped); not overridable;
+      * it was dispatched more than `older_than_s` ago. The default is LEASE_TTL, which loop_config
+        requires to exceed job_timeout_s, so every request that controller made has passed its own
+        timeout. A smaller value is the operator's assertion that its remote generation has ended.
+    If a ready copy of the job already exists the stale record is ARCHIVED (renamed out of running/,
+    kept as evidence); otherwise the record is requeued. Returns (recovered, held) with reasons."""
+    older = LEASE_TTL if older_than_s is None else max(0, int(older_than_s))
+    recovered, held = [], []
+    with exclusive_file(Q / ".ownership-lock"):
+        for record in sorted(DIRS["running"].glob("*.json")):
+            if record.name.startswith(CLAIM_PREFIX):
+                continue                                  # reclaim_orphans owns hidden claims
+            name = job_name_of(record.name)
+            try:
+                card = json.loads(record.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                held.append((name, "unreadable record"))
+                continue
+            owner = card.get("owner")
+            if not owner or not lease_owner_stopped(owner):
+                held.append((name, "owner {0} not provably stopped".format(owner or "(none)")))
+                continue
+            age = time.time() - record.stat().st_mtime
+            if age < older:
+                held.append((name, "dispatched {0:.0f} min ago, under {1:.0f} min".format(age / 60, older / 60)))
+                continue
+            ready = DIRS["ready"] / f"{name}.json"
+            if ready.exists():
+                os.replace(record, DIRS["failed"] / (record.name + ".stale-recovered"))
+                recovered.append((name, "archived stale record; a ready copy is queued"))
+            else:
+                os.replace(record, ready)
+                recovered.append((name, "requeued"))
+    return recovered, held
+
+
 def _ensure():
     for d in DIRS.values():
         d.mkdir(parents=True, exist_ok=True)
@@ -662,7 +705,9 @@ def drain(workers, max_rounds, max_seconds, redo_mode):
     for n in requeued:
         print(f"  requeued orphan {n}")
     for n in skipped:
-        print(f"  left {n} alone (another controller still holds its lease)")
+        # Not always a live lease: an already-DISPATCHED record is held on purpose, and only an
+        # operator can recover it (`python run/queue.py recover-stale`).
+        print(f"  left {n} in running/ (owner live, or dispatched: recover with `queue.py recover-stale`)")
     # capacity = each UP worker's max_inflight (fail-fast drops wedged workers)
     cap = {}
     for w in dict.fromkeys(workers):
@@ -808,6 +853,9 @@ def main():
     d.add_argument("--max-rounds", type=int, default=5)
     d.add_argument("--max-seconds", type=int, default=0, help="0 = until ready is empty")
     d.add_argument("--redo-mode", choices=("conversation", "rewrite"), default=None)
+    r = sub.add_parser("recover-stale", help="requeue/archive dispatched jobs whose controller is provably stopped")
+    r.add_argument("--older-than", type=int, default=None,
+                   help="seconds since dispatch (default: lease TTL); smaller is your assertion that its remote call ended")
     a = ap.parse_args()
     if a.cmd == "add":
         add(a.cards)
@@ -815,6 +863,12 @@ def main():
         add(sorted((ROOT / a.dir).glob("*.json")) if not Path(a.dir).is_absolute() else sorted(Path(a.dir).glob("*.json")))
     elif a.cmd == "status":
         status()
+    elif a.cmd == "recover-stale":
+        recovered, held = recover_dispatched(a.older_than)
+        for n, why in recovered:
+            print(f"  recovered {n}: {why}")
+        for n, why in held:
+            print(f"  held {n}: {why}")
     elif a.cmd == "drain":
         drain([w.strip() for w in a.workers.split(",") if w.strip()], a.max_rounds, a.max_seconds, a.redo_mode)
 

@@ -99,8 +99,35 @@ before generating.
 - Operators can recover dispatched records from dead controllers (`queue.py recover-stale`).
 
 A live tools-mode trial on the bundled runtime recorded length-limited turns, and the architect
-issued an evidence-based ADJUST. Whether the raised limit completes the packet is recorded in the
-trial notes, not asserted here. Prompt compaction and scratch garbage collection are not implemented.
+issued evidence-based ADJUSTs. One adjusted packet was accepted. Another timed out on the fixed
+request wait, which led to the timeout scaling and classification below.
+
+2026-09-25, second batch (local commits; offline tests only unless stated):
+- #32 (another session): tools-mode drafts get the three-question coaching pass. Architect
+  challenges read the real tool workspace plus the stop evidence, with no silent repository fallback.
+- #27: request timeouts scale with the requested output. A worker timeout is a recorded round
+  failure (`request_timeout`), not an infrastructure crash, and ADJUST may lower a limit that
+  timed out.
+- #25/#30: workprobe tool probes execute on the tool service in a private workspace (a guarded
+  append must be accepted by the service). OVERSIZED applies to chat outcomes only.
+- #30: the tool loop sends a compacted view when the conversation would overflow the context,
+  and the checkpoint keeps the full history. `run/scratch.py` inventories and prunes tool
+  workspaces, reference-aware, as a dry run by default.
+- #25/#28: `run/readiness.py` saves per-lane readiness outside the repo with a configuration
+  identity. Preflight reports qualified/changed/failed/missing (advisory unless
+  `HANDOFF_REQUIRE_READINESS=1`).
+- #11: worker/skeptic roles are persisted in the registry (`registry.py roles`). `start` checks
+  that the roles answer a canary before intake/planning spends tokens.
+- #13: `autonomous --delegate` writes a missing scope from confirmed intake and prints what
+  delegation covers.
+- #6: seeded goal criteria reach the planner with their ids.
+- #7: `run/overnight.py` continues across dependent milestones in one authorized cumulative budget.
+- #21: `run/backlogc.py` compiles a Markdown backlog into dependency-closed batches and milestone
+  packages.
+- #9: `autonomous` and `overnight run` execute from a frozen harness snapshot.
+
+Not yet demonstrated live: the multi-milestone overnight path, a clean single-endpoint first use
+through dispatch, and delegated startup without scoped.md through dispatch.
 
 Additional local #30 work: guarded append/edit, ranged reads, per-workspace mutation serialization,
 request-identity checks and crash-reconciled file journals. Receipt resolution accepts validated

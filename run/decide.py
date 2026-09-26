@@ -245,9 +245,16 @@ packet as the first response. Use ADJUST to raise that assignment's max_output_t
 that was cut off, at or below the ceiling shown; it reopens the assignment under the SAME acceptance.
 The harness refuses ADJUST without recorded length-limited turns, above the ceiling, or when the limit
 is pinned (then PARK with a question for the operator). ADJUST never changes server settings.
+A `timeout:` failure (or `N request timeouts` in the generation evidence) means the harness stopped
+waiting for the reply: the lane generated the requested output slower than the wait allowed. It is NOT
+evidence the lane is down, so do not re-dispatch to another lane or PARK it as infrastructure on that
+basis. Either ADJUST max_output_tokens DOWN (the harness allows a lower limit when timeouts are recorded)
+so each turn fits the wait and the worker writes in sections, or PARK a question asking the operator to
+set the lane's min_tokens_per_s.
 """
 
 OUTPUT_LIMIT = "output_limit"
+REQUEST_TIMEOUT = "request_timeout"
 MISSING_INFO, INTERFACE, MISSING_INPUTS, NO_DELIVERABLE, BAD_STRATEGY, PROGRESSING, TRIVIAL, UNKNOWN = (
     "missing_information", "interface_mismatch", "missing_inputs_or_tools", "no_deliverable_produced",
     "unsuccessful_strategy", "progressing", "trivial_error", "unclear")
@@ -260,6 +267,10 @@ def classify_failure(text):
     t = (text or "").lower()
     if not t.strip():
         return UNKNOWN, "INVESTIGATE the failure: no failure text was recorded to act on"
+    if "timeout:" in t or "request timeouts" in t or "timed out" in t:
+        return REQUEST_TIMEOUT, ("ADJUST max_output_tokens DOWN so a turn fits the wait (the worker then "
+                                 "writes in sections), or PARK a question for the operator about the lane's "
+                                 "min_tokens_per_s: the harness stopped waiting; the lane is not shown to be down")
     if "length-limited" in t:
         # First: a file cut off at the output limit surfaces downstream as a syntax, import or
         # "no deliverable" error, and treating those as the cause repairs code that was never wrong.
@@ -303,8 +314,8 @@ def generation_summary(name):
     tool_ws = re.sub(r"[^A-Za-z0-9_-]", "-", "verified-" + str(name))
     files = sorted(list(root.glob("verified-" + name + "-*.jsonl")) + list(root.glob("tooljob-" + tool_ws + "-*.jsonl")),
                    key=lambda q: q.stat().st_mtime)
-    turns = limited = 0
-    max_requested = max_prompt = 0
+    turns = limited = timeouts = 0
+    max_requested = max_prompt = timeout_tokens = 0
     worker = runtime = None
     for f in files:
         for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -317,6 +328,10 @@ def generation_summary(name):
                 worker = row["worker"]
             elif ev == "tool_runtime":
                 runtime = row.get("kind")
+            elif ev == "worker_timeout":
+                timeouts += 1
+                if isinstance(row.get("requested_max_tokens"), int):
+                    timeout_tokens = max(timeout_tokens, row["requested_max_tokens"])
             elif ev == "generation" and isinstance(row.get("evidence"), dict):
                 e = row["evidence"]
                 turns += 1
@@ -338,8 +353,12 @@ def generation_summary(name):
     ceiling = generation.output_ceiling(worker, max_prompt or None) if worker else 0
     facts = {"turns": turns, "length_limited": limited, "max_requested": max_requested, "worker": worker,
              "ctx": ctx, "max_prompt": max_prompt or None, "ceiling": ceiling, "pinned": pinned,
-             "runtime": runtime}
+             "runtime": runtime, "timeouts": timeouts, "timeout_tokens": timeout_tokens or None}
+    tail = ("; {0} request timeouts waiting for up to {1} output tokens (the harness stopped waiting, "
+            "not a down lane)".format(timeouts, timeout_tokens or "?")) if timeouts else ""
     if not turns:
+        if timeouts:
+            return "generation evidence: no completed turns" + tail, facts
         return ("generation evidence: none recorded for this run (the runtime may not report stop "
                 "reasons)"), facts
     head = ("{0} of {1} model turns LENGTH-LIMITED (stopped at the output limit)".format(limited, turns)
@@ -349,7 +368,7 @@ def generation_summary(name):
                 head, max_requested or "unknown", worker or "unknown", ctx or "unknown",
                 max_prompt or "unknown", ceiling or "unknown",
                 "PINNED by operator at {0}".format(pinned) if pinned else "not pinned (ADJUST may raise it)",
-                runtime or "n/a")), facts
+                runtime or "n/a")) + tail, facts
 
 
 def failure_text(name, limit=1400):
@@ -801,6 +820,10 @@ def validate(decision, delta):
         except Exception:
             rid = name
         _t, f = generation_summary(rid)
+        if f["timeouts"] and not f["pinned"] and n < (f["timeout_tokens"] or f["max_requested"] or n + 1):
+            if n < 256:
+                return False, "ADJUST of {0!r}: {1} is too small to deliver anything useful".format(name, n)
+            return True, "ok"   # lowering a limit that timed out: each turn must fit the wait
         if not f["length_limited"]:
             return False, ("ADJUST of {0!r} refused: no length-limited generation is recorded for it; "
                            "raise a budget only on evidence that the output limit cut it off".format(name))

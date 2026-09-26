@@ -1475,6 +1475,30 @@ def _keep_artifact(ws, output, previous, artifact="output.md", rnd=None):
     return output or ""
 
 
+def timeout_detail(exc, card):
+    """A request timeout on the worker call, described for the architect -- or "" if `exc` is not one.
+
+    A timeout used to crash the executor, which the queue files as worker-unavailable and the goal
+    ledger as infrastructure, so the architect read a harness wait as a broken lane and re-dispatched
+    or repeated the same limit (live, 2026-09-25). It is a round failure with its own evidence."""
+    import urllib.error
+    base = exc.reason if isinstance(exc, urllib.error.URLError) and isinstance(
+        getattr(exc, "reason", None), BaseException) else exc
+    if not (isinstance(base, TimeoutError) or (isinstance(base, OSError) and "timed out" in str(base).lower())):
+        return ""
+    worker = card.get("worker")
+    tools = bool(card.get("tools"))
+    n = int(card.get("max_output_tokens") or (1400 if tools else _LOOP.worker_max_tokens))
+    try:
+        from generation import request_timeout
+        wait = request_timeout(worker, n, floor=300 if tools else 200)
+    except Exception:
+        wait = None
+    return ("timeout: the request timed out after ~{0}s waiting for up to {1} output tokens from {2} "
+            "(the harness stopped waiting; this is not evidence the lane is down)".format(
+                wait if wait is not None else "?", n, worker or "the worker"))
+
+
 def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guidance="",
              k=3, investigation_budget=None, receipt=None, require_evidence=None, job_id=None):
     """Run the rounds and return the run record. The caller owns process exit codes and printing.
@@ -1504,7 +1528,16 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
     for rnd in range(1, max_rounds + 1):
         round_recovery = None
         recovery_extra = ""
-        output, review_root, in_flight = hooks.worker(rnd, guidance)
+        try:
+            output, review_root, in_flight = hooks.worker(rnd, guidance)
+            timed_out = ""
+        except Exception as exc:
+            timed_out = timeout_detail(exc, card)
+            if not timed_out:
+                raise
+            emit("worker_timeout", round=rnd, detail=timed_out, worker=card.get("worker"),
+                 requested_max_tokens=int(card.get("max_output_tokens") or 0) or None)
+            output, review_root, in_flight = "", str(ws), ()
         review_root = review_root or str(ws)
         # Verify and seal in one attempt-bound step. The verdict now carries the artifact hash it
         # was computed over and the attempt it belongs to, so it cannot be offered for another --
@@ -1522,7 +1555,7 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
                             oracle_ok, result=vresult, capture=_capture_hook(hooks, rnd),
                             transform=first_code_block if named else None,
                             transform_name="first_code_block" if named else None)
-        delivery = getattr(hooks.worker, "delivery_failure", "") or ""
+        delivery = timed_out or getattr(hooks.worker, "delivery_failure", "") or ""
         # `reason` feeds the recurrence tracker below (`if not oracle_ok`). It was assigned only in
         # the oracle-failed branch, so a DELIVERY failure (no usable file) with a failing oracle --
         # the single most common local-model outcome -- reached the tracker with `reason` unbound and

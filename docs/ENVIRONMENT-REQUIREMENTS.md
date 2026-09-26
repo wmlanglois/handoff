@@ -108,11 +108,15 @@ A useful qualification checks retained information across a correction and reali
 
 Temperature is a sampling control, not a duration or context setting. Reasoning modes may consume output allowance differently across providers. Record requested settings and observed usage separately. A closed code fence does not establish that a response was not cut short; preserve provider stop/usage evidence when available.
 
-Current limitations: chat calls use `loop_config.worker_max_tokens=4096`; `run/tooljob.py` defaults to 1400 per model turn. These are not the server's context. `call.fit_context` uses a character-based estimate and can trim old messages. The local #26 patch protects carry-bearing initial requests, but is not yet published. Shared configurable budgeting and robust diagnostics remain #25/#27/#28 work. No 64K minimum or universal sampling prescription is established.
+Current behavior: chat calls default to `loop_config.worker_max_tokens=4096` and tool jobs to 1400 per model turn. These are harness defaults, not the server's context. Stop reason and usage are recorded for every worker turn, including tool loops that stop by raising. When turns are recorded as length-limited, the architect can `ADJUST` one assignment's `max_output_tokens` up to the lane's ceiling (context minus observed prompt minus a margin, capped by a worker's `max_output`). An operator value in `WORKER_OUTPUT_LIMITS` is **pinned**: it always wins and the architect is refused. The planner is told each dispatch lane's per-response allowance and ceiling, and plan review rejects an outcome whose `est_lines` cannot fit the smallest lane's ceiling. `call.fit_context` still uses a character-based estimate. No 64K minimum is established.
+
+Sampling and thinking are per worker and set by the operator, in `WORKER_REQUEST_PROFILES` (keys `temperature, top_p, top_k, min_p, presence_penalty, repeat_penalty, think, reasoning_effort, thinking_budget`). They apply to worker work calls in chat and tools mode. A sampling key set to `None` is not sent, so the server's own value applies. Health canaries and qualification keep the fixed settings. The values actually sent are recorded with each turn's evidence. If no profile is set, the harness defaults stay: thinking off, temperature 0.6 for chat and 0.2 for tools.
 
 ## 5. Tools: verify the execution host, not just the schema
 
 Current bundled `python_run` invokes the tool-service process's `sys.executable` in a job workspace, with a 60-second subprocess timeout. A package installed in another Python, another container or the model server is not thereby available. It can execute host code; the bundled service is not a security sandbox.
+
+Preflight for a tools run now checks the host through the service's own `python_run`. It reports that interpreter's path and version and refuses the run when a module the plan's checks run as `python -m <module>` (plus any module in `TOOL_HOST_REQUIRED_MODULES`) is missing. `HANDOFF_ALLOW_MISSING_TOOL_DEPS=1` accepts the run anyway. Preflight also names the tool runtime (bundled or `FLEET_DISPATCH_DIR`) and refuses one that lacks the required capabilities, unless `HANDOFF_ALLOW_DEGRADED_TOOL_RUNTIME=1` is set.
 
 Before coding work, establish interpreter identity, required imports/executables, writable authorized workspace, subprocess behavior, dependency network policy and how tests terminate. A long-running app needs a bounded test that starts it, waits for readiness and cleans up its process; do not leave test servers accumulating.
 
@@ -124,7 +128,7 @@ OpenHands separates its action-execution runtime from the agent and uses runtime
 
 Handoff's jobs/locks use Python `sqlite3`, not a separately administered SQL server. Verify that the exact controller Python supports it and that the intended storage can initialize, transact and reopen. Python documents SQLite as an embedded database without a separate server process. [Python SQLite](https://docs.python.org/3/library/sqlite3.html).
 
-Current mapping requires care: `jobs.py` uses checkout-relative `runs/jobs.sqlite3`; retained lessons/skills use JSONL under `FLEET_MEMORY_DIR` or checkout-relative `runs/memory`; other runtime paths use `FLEET_RUNS_DIR`. Do not assume one override moves every store. Inventory all resolved locations and intended sharing before running multiple checkouts. Do not move active databases or merge histories during setup.
+Every store now follows `FLEET_RUNS_DIR`: `jobs.sqlite3` (which also holds the cluster prefill lock), goals, integrate and memory. Each one can be overridden separately (`FLEET_JOBS_DB`, `FLEET_GOALS_DIR`, `FLEET_INTEGRATE_DIR`, `FLEET_MEMORY_DIR`). The conductor prints every resolved path after preflight. Two checkouts that share one fleet must resolve to the same jobs database, or they will not see each other's prefill lock. Check the printed paths before running more than one checkout. Do not move active databases or merge histories during setup.
 
 The skeptic needs a configured model, accessible evidence and a working feedback path. Same-model review is allowed in some configurations but must not be described as independent. Deliberately disabling review is a reduced mode. Qualification should demonstrate an actual feedback/revision cycle, not simply that two model names exist.
 
@@ -140,6 +144,12 @@ python run/registry.py connect --url http://specified-host:8080
 python run/registry.py check http://specified-host:8080 --model exact-model-id
 python run/registry.py add http://specified-host:8080 --name coding-worker --model exact-model-id
 ```
+
+```text
+python run/workprobe.py coding-worker
+```
+
+`workprobe` checks a registered lane for work compliance through the production call path. It asks for three things: code in a fence the harness extracts, a well-formed `files` tool call, and a file written in sections (write, then append). The report is saved under the runs root and the registry is not changed.
 
 `list` reads registration. `connect` discovers/qualifies and can register; `check` qualifies without registration; `add` qualifies and registers. Qualification can generate model output. `--no-register` is not a no-generation promise. Current default discovery only tries known localhost candidates (1234, 8080, 11434, 1337), not remote fleet discovery. Registration exposes `--ctx` and `--max-inflight`; supply established values, not guesses. The current API client appends versioned endpoint paths, so use the base format documented by Handoff rather than copying another client's URL blindly.
 
@@ -176,7 +186,7 @@ Source caveat: upstream pages and versions change. The Ollama hardware page and 
 
 - Exercise the existing instructions from a clean external project with no private settings imported.
 - Implement/verify the complete environment mapping and selective qualification under #25/#28.
-- Connect capacity/tool requirements to planning and dispatch, including explicit failure when essential input cannot fit.
+- Capacity is connected to planning (lane budgets, OVERSIZED review) and to recovery (architect ADJUST within ceilings). Still open: failing explicitly when essential input cannot fit, and a real model-context figure for lanes whose configured `ctx` is actually a generation cap.
 - Complete structured failure classification and architect routing (#27). Response evidence is preserved across chat and bundled tools; the carry-access correction is implemented (#26).
 - Add backend/version-specific qualification records for Windows, Linux and Apple Silicon; include headless, remote and shared-GPU cases without claiming every combination works.
 - Define installation, network access, service lifecycle and dependency-remediation permissions up front for unattended use.

@@ -58,12 +58,28 @@ This reconciliation does not re-verify every external paper, vendor claim, or re
 
 ## Updating the record
 
-Pending local follow-up: operator-pinned `WORKER_OUTPUT_LIMITS` is shared by coding-worker
-chat and tool jobs; tool-mode delivery feedback no longer requests fences. The bundled
-tool loop preserves incomplete returned replies as unexecuted evidence, bounds length-stop
-recovery, and checks estimated context before generation. This is partial #25/#27/#30 work,
-not automatic architect tuning, incremental submission, or scratch garbage collection.
-No active run or private server settings were changed.
+Operator-pinned `WORKER_OUTPUT_LIMITS` is shared by coding-worker chat and tool jobs.
+Tool-mode delivery feedback no longer asks for fences. The bundled tool loop keeps incomplete
+replies as unexecuted evidence, bounds length-stop recovery, and checks estimated context
+before generating.
+
+2026-09-25 (local commits, under #25/#28):
+- All run-state stores follow `FLEET_RUNS_DIR`, including the jobs/prefill-lock database.
+- Preflight names the tool runtime and refuses one that lacks required capabilities. It
+  probes the tool host's Python for the modules the plan's checks run.
+- Stop-reason evidence is recorded even when a tool loop stops by raising. The architect sees
+  it and can `ADJUST` an assignment's output limit within the lane ceiling, unless the limit
+  is pinned.
+- On a failed check, the skeptic's questions go into the next round.
+- Operators can set per-worker request profiles (thinking and sampling) in
+  `WORKER_REQUEST_PROFILES`.
+- The planner sees lane budgets, and plan review rejects outcomes too large for any lane.
+- `run/workprobe.py` probes a lane for code-fence, tool-call and sectioned-write compliance.
+- Operators can recover dispatched records from dead controllers (`queue.py recover-stale`).
+
+A live tools-mode trial on the bundled runtime recorded length-limited turns, and the architect
+issued an evidence-based ADJUST. Whether the raised limit completes the packet is recorded in the
+trial notes, not asserted here. Prompt compaction and scratch garbage collection are not implemented.
 
 Additional local #30 work: guarded append/edit, ranged reads, per-workspace mutation serialization,
 request-identity checks and crash-reconciled file journals. Receipt resolution accepts validated

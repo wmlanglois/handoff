@@ -31,6 +31,70 @@ def _get(url, token):
         return json.load(response)
 
 
+#: Messages at the end of the conversation that are never compacted (the current working set).
+COMPACT_KEEP_TAIL = 6
+#: A body shorter than this is left alone: replacing it would save nothing worth a reread.
+COMPACT_MIN_CHARS = 400
+
+
+def _estimate(messages, tools):
+    return (len(json.dumps({"messages": messages, "tools": tools}, ensure_ascii=False)) + 3) // 4
+
+
+def compact_view(messages, tools, budget_tokens):
+    """(view, replaced) -- the conversation to SEND when the full one would not fit `budget_tokens`.
+
+    The full conversation stays in the checkpoint; only the request view shrinks (#30). Oldest first,
+    file bodies that already reached the workspace are replaced with a reference to reread them:
+    the `content` argument of an earlier files write/append/edit, and the `content` of an earlier
+    files read result. The first message (the task and its requirements) and the last
+    COMPACT_KEEP_TAIL messages are never touched, and no message is removed, so every assistant
+    tool call keeps its tool result. If the view still does not fit, the caller refuses as before."""
+    if _estimate(messages, tools) <= budget_tokens:
+        return messages, 0
+    view = [dict(m) for m in messages]
+    replaced = 0
+    last = max(1, len(view) - COMPACT_KEEP_TAIL)
+    for i in range(1, last):
+        m = view[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            calls = []
+            for tc in m["tool_calls"]:
+                fn = dict(tc.get("function") or {})
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except (TypeError, ValueError):
+                    args = None
+                if isinstance(args, dict) and isinstance(args.get("content"), str) \
+                        and len(args["content"]) >= COMPACT_MIN_CHARS:
+                    n = len(args["content"])
+                    args["content"] = ("[{0} chars sent to {1} in an earlier turn; omitted to fit context. "
+                                       "Reread the file with files read (start_line/max_lines) if you "
+                                       "need it.]".format(n, args.get("path") or "the file"))
+                    fn["arguments"] = json.dumps(args)
+                    replaced += 1
+                calls.append(dict(tc, function=fn))
+            m["tool_calls"] = calls
+        elif m.get("role") == "tool":
+            try:
+                res = json.loads(m.get("content") or "")
+            except (TypeError, ValueError):
+                res = None
+            inner = res.get("result") if isinstance(res, dict) else None
+            if isinstance(inner, dict) and isinstance(inner.get("content"), str) \
+                    and len(inner["content"]) >= COMPACT_MIN_CHARS:
+                n = len(inner["content"])
+                inner = dict(inner, content=("[{0} chars of {1} (sha256 {2}) read in an earlier turn; omitted "
+                                             "to fit context. Reread the lines you need.]".format(
+                                                 n, inner.get("path") or "the file",
+                                                 str(inner.get("sha256") or "?")[:12])))
+                m["content"] = json.dumps(dict(res, result=inner))
+                replaced += 1
+        if _estimate(view, tools) <= budget_tokens:
+            break
+    return view, replaced
+
+
 def _call_id(execution_id, tool_id):
     return "tool-" + hashlib.sha256(json.dumps([execution_id, tool_id]).encode()).hexdigest()
 
@@ -49,6 +113,7 @@ def run(dispatcher, execution_id, job, worker):
         generations = saved.get("generations", [])
         incomplete = saved.get("incomplete", [])
         truncations = saved.get("truncations", 0)
+        compactions = saved.get("compactions", [])
         coaching = saved.get("coaching")
         if coaching and coaching.get("status") == "started":
             coaching = {"status": "interrupted", "reason": "review did not checkpoint a result"}
@@ -58,12 +123,14 @@ def run(dispatcher, execution_id, job, worker):
         generations = []
         incomplete = []
         truncations = 0
+        compactions = []
         coaching = None
 
     def save():
         dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds,
                                              "generations": generations, "incomplete": incomplete,
-                                             "truncations": truncations, "coaching": coaching})
+                                             "truncations": truncations, "coaching": coaching,
+                                             "compactions": compactions})
 
     save()
     maximum = int(job.get("max_rounds", 16))
@@ -97,9 +164,17 @@ def run(dispatcher, execution_id, job, worker):
             for key in worker.get("request_omit") or ():
                 request.pop(key, None)
             # Conservative estimate includes tool schemas and call arguments, not just content.
-            # Do not trim a tool-call/result group or silently discard essential project material.
-            estimated_input = (len(json.dumps({"messages": messages, "tools": tools},
-                                               ensure_ascii=False)) + 3) // 4
+            # Never trim a tool-call/result group or the task: when the full conversation would not
+            # fit, SEND a compacted view (earlier file bodies -> reread references); the checkpoint
+            # keeps the full conversation as the recoverable record.
+            budget = int(worker.get("ctx", 8192)) - request["max_tokens"] - 512
+            view, replaced = compact_view(messages, tools, budget)
+            if replaced:
+                request["messages"] = view
+                compactions.append({"round": rounds, "replaced": replaced,
+                                    "full_tokens_est": _estimate(messages, tools),
+                                    "sent_tokens_est": _estimate(view, tools)})
+            estimated_input = _estimate(request["messages"], tools)
             if estimated_input + request["max_tokens"] + 512 > int(worker.get("ctx", 8192)):
                 save()
                 raise RuntimeError("tool context capacity exceeded (estimated input + output + reserve); "

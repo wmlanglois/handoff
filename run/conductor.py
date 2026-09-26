@@ -797,6 +797,36 @@ def _planner_for(project_root):
     return planner
 
 
+def planner_criteria(intake_criteria, goal_criteria, *, echo=print):
+    """The criteria the planner is given (#6): the intake done-when criteria PLUS every other
+    machine-checkable criterion recorded on the goal (seeded with add_criterion), IDs preserved.
+    The milestone (covered by the journey) and human_only criteria (sign-offs, examples) are
+    excluded deliberately and said so, so they never sit as permanently-uncovered planner work."""
+    out = [dict(c) for c in intake_criteria or ()]
+    have = {c["id"] for c in out}
+    seeded, excluded = [], []
+    for c in goal_criteria or ():
+        cid = c.get("id")
+        if not cid or cid in have:
+            continue
+        if cid == "milestone" or c.get("human_only"):
+            excluded.append(cid)
+            continue
+        text = (c.get("text") or "").strip()
+        if not text:
+            excluded.append(cid)
+            continue
+        out.append({"id": cid, "text": text})
+        have.add(cid)
+        seeded.append(cid)
+    if seeded:
+        echo("planning {0} criteria added to the goal beyond the intake: {1}".format(len(seeded), ", ".join(seeded)))
+    extra = [x for x in excluded if x != "milestone"]
+    if extra:
+        echo("not planned as packets (human-only or no checkable text): {0}".format(", ".join(extra)))
+    return out
+
+
 def unplanned_criteria(goal_criteria, intake_ids, planned_ids):
     """Issue #6: goal criteria the planner never sees and no accepted outcome covers.
 
@@ -842,7 +872,7 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True, plan_file
     import proofloop
     _bind_tool_mode(package, gid)
     st = projectpkg.intake_state(package, name)
-    criteria = projectpkg.criteria_from_intake(st)
+    criteria = planner_criteria(projectpkg.criteria_from_intake(st), goals.state(gid).get("criteria") or [])
     limits = projectpkg.limits_from_intake(st)
     answers = (st.get("answers") or {})
     goals.set_unapproved_text(gid, page)

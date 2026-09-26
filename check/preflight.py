@@ -152,6 +152,28 @@ def probe_tool_host(emit, modules):
     return info
 
 
+def _readiness_rows(worker_names, rows, reasons):
+    """Recorded work-compliance readiness per coding lane (run/readiness.py). Advisory -- liveness is
+    the canary above -- unless HANDOFF_REQUIRE_READINESS=1, which refuses a lane not qualified under
+    its current configuration."""
+    run_dir = str(Path(__file__).resolve().parent.parent / "run")
+    if run_dir not in sys.path:
+        sys.path.insert(0, run_dir)
+    try:
+        import readiness
+    except Exception as e:
+        rows.append({"worker": "(readiness)", "role": "readiness", "verdict": "unavailable", "error": repr(e)[:120]})
+        return
+    for n in [x for x in (worker_names or []) if x]:
+        try:
+            s = readiness.status(n)
+        except Exception as e:
+            s = {"state": "unavailable", "summary": repr(e)[:120]}
+        rows.append({"worker": n, "role": "readiness", "verdict": s["state"], "summary": s["summary"]})
+        if s["state"] != "qualified" and os.environ.get("HANDOFF_REQUIRE_READINESS"):
+            reasons.append("readiness {0}: {1}".format(n, s["summary"]))
+
+
 def tool_runtime_info():
     """Which tool runtime tool jobs will use and what it declares (see run/tooljob.runtime_info)."""
     run_dir = str(Path(__file__).resolve().parent.parent / "run")
@@ -216,6 +238,7 @@ def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True, too
                                                                 ", ".join(th.get("missing") or []))
                     if th["verdict"] == "missing-modules" else
                     "tool-host: could not run the dependency probe ({0})".format(th.get("error")))
+        _readiness_rows(worker_names, rows, reasons)
         rt = tool_runtime_info()
         if rt.get("kind") != "bundled" and any(WORKERS.get(n, {}).get("api_key_env") for n in names):
             reasons.append("authenticated gateway workers require the bundled tool runtime")

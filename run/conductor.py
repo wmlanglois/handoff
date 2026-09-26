@@ -1339,6 +1339,8 @@ def _cmd_autonomous(a):
         ok, reason, pf_rows = preflight.gate(workers, need_tool_service=need_tools,
                                              tool_host_modules=preflight.modules_named(_texts))
         for _r in pf_rows:
+            if _r.get("role") == "readiness":
+                print("readiness {0}: {1} -- {2}".format(_r.get("worker"), _r.get("verdict"), _r.get("summary", "")))
             if _r.get("role") == "tool-host":
                 print("tool host: python {0} at {1}; checks need {2}{3}".format(
                     _r.get("version", "?"), _r.get("python", "?"), ", ".join(_r.get("required") or []) or "stdlib only",

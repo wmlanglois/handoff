@@ -227,6 +227,12 @@ def main(argv=None):
         for k, p in rep["probes"].items():
             print("  {0:<18} {1:<4} {2} ({3} ms)".format(k, "ok" if p["ok"] else "FAIL", p["note"], p["ms"]))
         print("  recorded {0}".format(path))
+        try:
+            import readiness
+            readiness.record(name, rep)
+            print("  readiness: {0}".format(readiness.status(name)["summary"]))
+        except Exception as e:           # a report that cannot be saved is still a report
+            print("  readiness NOT saved: {0}".format(str(e)[:120]))
         rc = rc or (0 if rep["ok"] else 1)
     return rc
 

@@ -1,5 +1,16 @@
 # Implementation status and research connections
 
+## Local follow-up: LiteLLM discovery/import (#31)
+
+`run/litellm_import.py` previews an explicitly supplied YAML/JSON config or gateway
+model list and qualifies one selected alias into the existing registry on `--apply`.
+Gateway auth uses environment references through chat, preflight and bundled tools.
+No server changes, role selection, provider-setting translation or readiness-cache
+automation. The [guide](LITELLM-IMPORT.md) lists commands and dependencies. Offline
+fake-HTTP integration tests cover the connection paths; no live LiteLLM instance
+has been exercised. Publication status belongs in #31; this paragraph does not
+claim this local change has been pushed.
+
 Reconciled September 25, 2026 against runtime commit [`221f434`](https://github.com/wmlanglois/handoff/commit/221f434afe5815670a7d72eedf0dba88f6062e1c). This page maps shipped behavior to remaining work; it is not a claim of universal platform support, live endurance success, or measured productivity benefit.
 
 ## Shipped corrections

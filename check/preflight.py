@@ -25,24 +25,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fleet import WORKERS, REQUIRED, TOOL_SERVICE, DEFAULT_WORKER, SKEPTIC_WORKER  # noqa
 from log import logger  # noqa
 
-def _get(url, timeout):
+def _get(url, timeout, api_key_env=None):
     t = time.time()
-    with urllib.request.urlopen(url, timeout=timeout) as r:
+    from endpoint_http import open_request
+    with (open_request(urllib.request.Request(url), timeout, api_key_env) if api_key_env else
+          urllib.request.urlopen(url, timeout=timeout)) as r:
         return r.status, r.read(), round((time.time() - t) * 1000)
 
-def _post(url, body, timeout):
+def _post(url, body, timeout, api_key_env=None):
     t = time.time()
     req = urllib.request.Request(url, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    from endpoint_http import open_request
+    with (open_request(req, timeout, api_key_env) if api_key_env else
+          urllib.request.urlopen(req, timeout=timeout)) as r:
         return json.loads(r.read()), round((time.time() - t) * 1000)
 
 def probe_worker(name, w, canary_timeout, emit):
     url, model = w["url"], w["model"]
     row = {"worker": name, "verdict": "ok"}
+    auth = {"api_key_env": w["api_key_env"]} if w.get("api_key_env") else {}
     # 1. reachable
     try:
-        _, _, ms = _get(url + "/v1/models", 6)
+        _, _, ms = _get(url + "/v1/models", 6, **auth)
         row["reach_ms"] = ms
         emit("reachable", worker=name, ms=ms)
     except Exception as e:
@@ -54,7 +59,7 @@ def probe_worker(name, w, canary_timeout, emit):
         d, ms = _post(url + "/v1/chat/completions",
                       {"model": model, "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
                        "max_tokens": 5, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}},
-                      canary_timeout)
+                      canary_timeout, **auth)
         text = (d.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
         row["canary_ms"] = ms
         if not text:
@@ -75,7 +80,7 @@ def probe_worker(name, w, canary_timeout, emit):
             d, ms = _post(url + "/v1/chat/completions",
                           {"model": model, "messages": [{"role": "user", "content": "Call the ping tool with x='ok'."}],
                            "tools": tool, "tool_choice": "auto", "max_tokens": 60,
-                           "chat_template_kwargs": {"enable_thinking": False}}, canary_timeout)
+                           "chat_template_kwargs": {"enable_thinking": False}}, canary_timeout, **auth)
             has = bool(d.get("choices", [{}])[0].get("message", {}).get("tool_calls"))
             row["toolcall"] = has
             emit("toolcall", worker=name, ok=has, ms=ms)
@@ -212,6 +217,8 @@ def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True, too
                     if th["verdict"] == "missing-modules" else
                     "tool-host: could not run the dependency probe ({0})".format(th.get("error")))
         rt = tool_runtime_info()
+        if rt.get("kind") != "bundled" and any(WORKERS.get(n, {}).get("api_key_env") for n in names):
+            reasons.append("authenticated gateway workers require the bundled tool runtime")
         rows.append({"worker": "(tool-runtime)", "role": "tool-runtime",
                      "verdict": "ok" if not rt.get("missing") else "degraded", **rt})
         if rt.get("missing") and not os.environ.get("HANDOFF_ALLOW_DEGRADED_TOOL_RUNTIME"):

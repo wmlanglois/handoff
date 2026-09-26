@@ -1,5 +1,10 @@
 # Local environment requirements and readiness
 
+For an environment already configured in LiteLLM, use the optional
+[discovery/import guide](LITELLM-IMPORT.md). It previews aliases and imports one
+through the existing registry after explicit generation qualification. Existing
+servers stay unchanged; configuration reuse is not full workload qualification.
+
 Technical setup guide and requirements — September 25, 2026. Not a completed setup wizard or a claim of cross-platform qualification. Runtime observations include the carry correction (#26) and partial generation diagnostics (#27); see implementation status for remaining work. No model servers were probed or configured for this research. See also the [Phase 2 environment/workbench proposal](PHASE-2-ENVIRONMENT.md).
 
 Tracking: [environment journey #28](https://github.com/wmlanglois/handoff/issues/28), [profiles/readiness #25](https://github.com/wmlanglois/handoff/issues/25), [role setup #11](https://github.com/wmlanglois/handoff/issues/11), [carry #26](https://github.com/wmlanglois/handoff/issues/26), [diagnostics #27](https://github.com/wmlanglois/handoff/issues/27).

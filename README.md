@@ -32,6 +32,12 @@ Before running setup commands, the guiding agent should ask: **What do you want 
 
 ### 1. Choose the first-use path, then configure model seats if needed
 
+Already use LiteLLM? [Preview and import your existing gateway aliases](docs/LITELLM-IMPORT.md)
+with `python run/litellm_import.py --config <file>` or `--gateway <url>`.
+Preview makes no generation calls or registry changes. Explicit `--apply` qualifies
+one selected alias and saves it in the existing registry; role selection stays separate.
+No LiteLLM install or server restructuring is required.
+
 You can defer kickoff without connecting any model. For guided kickoff or an existing brief, choose whether to use optional model drafts; neither path skips the intake questions, scope approval, plan approval, or map approval. `start` with no choice prints the resolved project and package paths and stops without creating a package or calling a model. Relative paths resolve against the shell's current directory. `--project-kind local` records a local-folder preference, `git-existing` requires an existing Git worktree, and `git-new` runs `git init` in the project folder only. Handoff never creates a remote or pushes the project.
 
 Use Python 3.11 or newer. The current connected project path uses an authenticated **Claude CLI** (`claude -p`) for intake drafts, scope writing, planning, and architect decisions. This is separate from the local worker fleet. `architect.py --engine codex` exists for a standalone ruling, but it does **not** switch the whole project path to Codex. `FLEET_ASSIST`, `FLEET_SCOPE`, and `FLEET_PLANNER` accept replacement scripts for those individual steps; they do not replace every architect call. If you do not have Claude CLI access, stop before promising an autonomous run.

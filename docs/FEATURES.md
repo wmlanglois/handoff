@@ -1,5 +1,16 @@
 # Handoff feature wiki
 
+## `python run/litellm_import.py`
+
+Optional existing-environment adapter; [step-by-step guide](LITELLM-IMPORT.md).
+`--config <YAML-or-JSON>` previews a file offline; without it, `--gateway <URL>`
+reads `/v1/models`. `--api-key-env <NAME>` references a gateway credential without
+storing it. Preview is read-only and makes no generations. `--apply` requires
+`--gateway`, `--model <exact-alias>`, `--name <new-worker>` and `--ctx <total-tokens>`;
+it authorizes up to two short generation calls and registers that alias only.
+No overwrite, role changes, server changes or provider-setting import. YAML requires
+optional PyYAML; JSON does not. Authenticated tools require the bundled runtime.
+
 The harness in this repository is fleet. Local workers author files. A frontier model plans, judges, and decides. The harness checks, integrates, and continues from what was actually accepted. Packet completion is not project completion.
 
 This page is the callable surface. Each heading is an exact command a search can match. Flags are the ones `--help` prints. The ordered entry for a new project is [the README start-here section](../README.md#start-here-one-project-in-order).

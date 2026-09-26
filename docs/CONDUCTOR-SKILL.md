@@ -1,5 +1,13 @@
 # Conductor skill
 
+Existing LiteLLM setup: follow [the import guide](LITELLM-IMPORT.md) before asking
+the user to re-enter all endpoints. Read only their supplied config or gateway;
+preview is not authorization to generate. `--apply` explicitly qualifies one alias
+and registers it. Keep credentials as environment references, request the usable
+context rather than guessing from output caps, and select roles separately. Never
+map each load-balanced deployment to a physical worker or claim a preview proves
+tool/coding readiness. No server setup/restart or provider-setting rewrite is needed.
+
 Packet completion is not project completion.
 
 ## Before execution

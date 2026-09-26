@@ -332,7 +332,7 @@ REGISTRY_ERROR = None
 
 def make_worker(url, model, *, kind="openai", backend=None, ctx=DEFAULT_REGISTERED_CTX,
                 max_inflight=1, requires_prefill_lock=False, supports_gbnf=False,
-                reasoning_style="none", source="registered"):
+                reasoning_style="none", source="registered", api_key_env=None):
     """Build one worker record with conservative defaults for an endpoint we know little about.
 
     Every default below is the SAFE side of a measured failure on this fleet, not a guess at the
@@ -357,7 +357,7 @@ def make_worker(url, model, *, kind="openai", backend=None, ctx=DEFAULT_REGISTER
             "max_inflight": int(max_inflight),
             "requires_prefill_lock": bool(requires_prefill_lock),
             "supports_gbnf": bool(supports_gbnf), "reasoning_style": str(reasoning_style),
-            "source": source}
+            "source": source, **({"api_key_env": api_key_env} if api_key_env else {})}
 
 
 def _valid_registration(name, rec):
@@ -382,7 +382,7 @@ def _valid_registration(name, rec):
         return None, f"registration {name!r} names no model"
     try:
         kw = {k: rec[k] for k in ("kind", "backend", "ctx", "max_inflight",
-                                  "requires_prefill_lock", "supports_gbnf", "reasoning_style")
+                                  "requires_prefill_lock", "supports_gbnf", "reasoning_style", "api_key_env")
               if k in rec}
         return make_worker(url, model, **kw), None
     except (TypeError, ValueError) as e:                 # a hand-edited ctx of "lots", say

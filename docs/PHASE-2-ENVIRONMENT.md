@@ -1,5 +1,16 @@
 # Phase 2: environment inspection and a workbench over Handoff
 
+## September 25 follow-up: reuse LiteLLM configuration
+
+The optional [LiteLLM import adapter](LITELLM-IMPORT.md) implements a narrow part of
+environment reuse: explicit read-only alias discovery followed by qualified registry
+import. Existing gateway routing remains authoritative; no SDK, second scheduler or
+server restructuring is required. The design follows LiteLLM's documented alias and
+database/file distinction, with references in the guide. Private offline HTTP tests
+cover connection paths; a real LiteLLM deployment has not been tested here. Reusable
+readiness records, automatic role selection and broader environment management remain
+separate open work. Configuration discovery must not be confused with tool qualification.
+
 September 25, 2026 amendment. This is a design proposal, not a shipped panel or a replacement
 for earlier project plans. Track environment qualification in [#28](https://github.com/wmlanglois/handoff/issues/28)
 and saved profiles in [#25](https://github.com/wmlanglois/handoff/issues/25).

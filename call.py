@@ -198,10 +198,12 @@ def body_for(worker, messages, tools=None, max_tokens=1024, think=False, tempera
     return body
 
 
-def _post_nonstream(url, body, timeout):
+def _post_nonstream(url, body, timeout, api_key_env=None):
     req = urllib.request.Request(url + "/v1/chat/completions",
                                  data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    from endpoint_http import open_request
+    with (open_request(req, timeout, api_key_env) if api_key_env else
+          urllib.request.urlopen(req, timeout=timeout)) as r:
         response = json.loads(r.read())
         msg = dict(response["choices"][0]["message"])
         from generation import response_evidence
@@ -261,7 +263,9 @@ def _post_stream_with_prefill_lock(url, body, worker, timeout):
     # not handed away mid-prefill).
     last_progress = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        from endpoint_http import open_request
+        auth = WORKERS.get(worker, {}).get("api_key_env")
+        with (open_request(req, timeout, auth) if auth else urllib.request.urlopen(req, timeout=timeout)) as r:
             for raw in r:
                 if time.monotonic() - last_progress > timeout:
                     raise TimeoutError(
@@ -352,7 +356,8 @@ def chat(worker, messages, tools=None, max_tokens=1024, think=False, temperature
         if w.get("requires_prefill_lock"):
             msg = _post_stream_with_prefill_lock(w["url"], body, worker, timeout)
         else:
-            msg = _post_nonstream(w["url"], body, timeout)
+            msg = _post_nonstream(w["url"], body, timeout, **(
+                {"api_key_env": w["api_key_env"]} if w.get("api_key_env") else {}))
         from generation import response_evidence
         generation = msg.pop("_handoff_generation", None)
         if generation is None:

@@ -305,4 +305,9 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["run"]:
+        import harness_snapshot            # #9: run the night from a frozen harness snapshot
+        _rc = harness_snapshot.isolate("run/overnight.py", sys.argv[1:])
+        if _rc is not None:
+            sys.exit(_rc)
     sys.exit(main())

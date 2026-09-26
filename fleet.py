@@ -37,6 +37,9 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+#: The checkout a run was launched from. Equal to ROOT except inside a harness snapshot (#9), where
+#: ROOT is the frozen copy and this is the source checkout whose bundled tool service is running.
+SOURCE_ROOT = Path(os.environ.get("HANDOFF_SOURCE_ROOT") or ROOT)
 #: Machine-specific values live here. Gitignored; never committed.
 LOCAL_SETTINGS = Path(os.environ.get("FLEET_SETTINGS") or (ROOT / "fleet_settings.local.py"))
 #: Committed template that documents every setting.

@@ -18,7 +18,17 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from fleet import WORKERS, TOOL_SERVICE, DEFAULT_WORKER, SettingsMissing, setting  # noqa
+from fleet import WORKERS, TOOL_SERVICE, DEFAULT_WORKER, SettingsMissing, setting, SOURCE_ROOT  # noqa
+
+
+def _is_bundled(path):
+    """The bundled runtime is this checkout's tool_runtime -- or, inside a harness snapshot (#9),
+    the source checkout's, whose frozen copy is the one loaded."""
+    try:
+        p = Path(path).resolve()
+        return p in ((ROOT / "tool_runtime").resolve(), (SOURCE_ROOT / "tool_runtime").resolve())
+    except OSError:
+        return False
 from log import logger  # noqa
 from state_lock import exclusive_file
 
@@ -27,6 +37,8 @@ def load_agent():
     """Load the bundled agent or an explicitly configured compatible runtime."""
     root = setting("FLEET_DISPATCH_DIR", str(ROOT / "tool_runtime"))
     path = Path(root)
+    if _is_bundled(path):
+        path = ROOT / "tool_runtime"                  # the frozen copy when running from a snapshot
     if not (path / "agent.py").exists():
         raise SettingsMissing(
             f"FLEET_DISPATCH_DIR={path} does not contain agent.py.\n"
@@ -63,10 +75,7 @@ def runtime_info(agent=None):
     """Which tool runtime will run tool jobs, and what it declares it can do. Never raises.
     Pass the already-loaded module to avoid loading an external runtime twice."""
     root = Path(setting("FLEET_DISPATCH_DIR", str(ROOT / "tool_runtime")))
-    try:
-        bundled = root.resolve() == (ROOT / "tool_runtime").resolve()
-    except OSError:
-        bundled = False
+    bundled = _is_bundled(root)
     info = {"kind": "bundled" if bundled else "external", "path": str(root)}
     try:
         caps = tuple(getattr(agent if agent is not None else load_agent(), "CAPABILITIES", ()) or ())
@@ -81,8 +90,8 @@ def runtime_info(agent=None):
 def workspace_dir(workspace_id):
     """Where the configured tool-service writes this job's artifacts."""
     root = setting("FLEET_DISPATCH_DIR", str(ROOT / "tool_runtime"))
-    return (ROOT / "runs" / "tool-service" / "jobs" / workspace_id
-            if Path(root).resolve() == (ROOT / "tool_runtime").resolve()
+    return (SOURCE_ROOT / "runs" / "tool-service" / "jobs" / workspace_id
+            if _is_bundled(root)
             else Path(root) / "tool-service" / "jobs" / workspace_id)
 
 def _lineage_path(ckpt_dir):

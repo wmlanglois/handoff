@@ -2332,4 +2332,11 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["autonomous"]:
+        # #9: a live run executes a frozen snapshot of the harness, not the editable checkout.
+        # At the command-line entry only: in-process callers (tests, overnight) are not relaunched.
+        import harness_snapshot
+        _rc = harness_snapshot.isolate("run/conductor.py", sys.argv[1:])
+        if _rc is not None:
+            sys.exit(_rc)
     main()

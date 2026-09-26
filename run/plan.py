@@ -446,13 +446,17 @@ def review(contract, *, others=(), criteria=(), root=None, project_root=None,
     # -- sized to the lanes (goal item #8, 2026-09-25) ----------------------------------------------
     # A packet whose artifact cannot fit in the smallest lane's output ceiling fails on every lane
     # however its limit is raised; say so before dispatch instead of after two length stops.
-    if lane_ceiling:
+    # Chat mode only: there the whole artifact IS one response. A tools outcome builds its file
+    # across turns with guarded append/edit (#30), so a whole-file size says nothing about whether
+    # it fits a turn -- rejecting it would block exactly the incremental delivery tools enable.
+    if lane_ceiling and not c.get("tools"):
         from generation import TOKENS_PER_LINE
         est = c.get("est_lines")
         if type(est) is int and est > 0 and est * TOKENS_PER_LINE > lane_ceiling:
             problems.append(("OVERSIZED",
                              "est_lines {0} is ~{1} output tokens, above the smallest lane ceiling of {2}; "
-                             "split it into outcomes linked by `needs`".format(
+                             "a chat outcome is one response, so split it into outcomes linked by `needs` "
+                             "or make it a tools outcome".format(
                                  est, est * TOKENS_PER_LINE, lane_ceiling)))
 
     return Review(name=c.get("name", "?"), ok=not problems, problems=problems)

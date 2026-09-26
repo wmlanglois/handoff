@@ -6,7 +6,8 @@ model can do what a packet asks: return code in the fence the harness extracts, 
 live only at dispatch, after a plan was approved and a lane was committed. This module asks each
 of them once, through the production call path (call.chat: context guard, prefill lock for the
 cluster, the worker's request profile), with the bundled tool service's own `files` schema, and
-the harness's own code extractor.
+the harness's own code extractor. Tool probes EXECUTE on the configured tool service in a
+private workspace, so a guarded append passes only when the service accepts its sha256.
 
 The probes are reported, never used to rewrite the registry: a lane that fails one is still
 usable for work that does not need it, and the operator decides.
@@ -68,75 +69,140 @@ def probe_format(worker, chat):
     return {"ok": True, "note": "fenced code extracted and parsed"}
 
 
-def probe_tool_call(worker, chat):
+def service_executor(job_id):
+    """Execute files calls on the configured tool service, in a private per-probe workspace.
+
+    Every result is the service's own answer -- including the sha256 a guarded append must quote --
+    so a probe passes only on operations the service actually performed. Nothing is fabricated."""
+    import secrets
+    import urllib.request
+    from fleet import TOOL_SERVICE
+    token = Path(TOOL_SERVICE["token_file"]).read_text(encoding="utf-8").strip()
+
+    def execute(name, args):
+        body = json.dumps({"job_id": job_id, "call_id": "wp-" + secrets.token_hex(8),
+                           "name": name, "arguments": args}).encode("utf-8")
+        req = urllib.request.Request(TOOL_SERVICE["url"].rstrip("/") + "/call", data=body, method="POST",
+                                     headers={"Authorization": "Bearer " + token,
+                                              "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+    return execute
+
+
+def _run_tools(worker, chat, execute, prompt, max_turns):
+    """Drive a short tool conversation, executing every call for real. Returns the executed calls as
+    [(args, service_result)] in order, and a note if the model stopped using tools."""
+    messages = [{"role": "user", "content": prompt}]
+    done = []
+    for _turn in range(max_turns):
+        msg, _ = chat(worker, messages, tools=_files_tool(), max_tokens=PROBE_TOKENS)
+        calls = _calls(msg)
+        if not calls:
+            return done, "no tool call" if not done else ""
+        messages.append({"role": "assistant", "content": msg.get("content") or "",
+                         "tool_calls": [c["raw"] for c in calls]})
+        for c in calls:
+            if c["name"] != "files" or not isinstance(c["args"], dict):
+                res = {"ok": False, "error": "not a well-formed files call"}
+            else:
+                try:
+                    res = execute("files", c["args"])
+                except Exception as e:
+                    res = {"ok": False, "error": "tool service call failed: {0}".format(str(e)[:160])}
+            done.append((c["args"] if isinstance(c["args"], dict) else {}, res))
+            messages.append({"role": "tool", "tool_call_id": c["id"], "name": "files",
+                             "content": json.dumps(res)})
+    return done, ""
+
+
+def probe_tool_call(worker, chat, execute):
     prompt = ("Create the file hello.py containing exactly one line: print('hi'). "
               "Use the files tool with action write. Do not answer in text.")
-    msg, _ = chat(worker, [{"role": "user", "content": prompt}], tools=_files_tool(),
-                  max_tokens=PROBE_TOKENS)
-    calls = _calls(msg)
-    if not calls:
+    done, note = _run_tools(worker, chat, execute, prompt, max_turns=1)
+    if not done:
         return {"ok": False, "note": "no tool call (answered in text)"}
-    c = calls[0]
-    if c["name"] != "files":
-        return {"ok": False, "note": "called {0!r}, not files".format(c["name"])}
-    if not isinstance(c["args"], dict):
-        return {"ok": False, "note": "tool arguments are not valid JSON"}
-    if c["args"].get("action") != "write" or c["args"].get("path") != "hello.py":
-        return {"ok": False, "note": "files call was {0}".format(
-            {k: c["args"].get(k) for k in ("action", "path")})}
-    return {"ok": True, "note": "well-formed files write"}
+    args, res = done[0]
+    if not args:
+        return {"ok": False, "note": "tool call was not a well-formed files call"}
+    if args.get("action") != "write" or args.get("path") != "hello.py":
+        return {"ok": False, "note": "files call was {0}".format({k: args.get(k) for k in ("action", "path")})}
+    if not res.get("ok"):
+        return {"ok": False, "note": "the service refused the write: {0}".format(res.get("error"))}
+    return {"ok": True, "note": "files write executed by the service ({0} bytes)".format(
+        (res.get("result") or {}).get("bytes"))}
 
 
-def probe_incremental_write(worker, chat):
+def probe_incremental_write(worker, chat, execute):
     prompt = ("Create numbers.py with 40 functions f1 through f40, each returning its own number "
               "(def f1(): return 1, and so on). Each files call may carry at most {0} lines: write "
-              "the first {0} lines with action write, then add the rest with action append. "
+              "the first {0} lines with action write, then add the rest with action append. An append "
+              "must quote the file's current sha256 (from the previous result) as expected_sha256. "
               "Do not answer in text.".format(SECTION_LINES))
-    messages = [{"role": "user", "content": prompt}]
-    msg, _ = chat(worker, messages, tools=_files_tool(), max_tokens=PROBE_TOKENS)
-    calls = _calls(msg)
-    if not calls or not isinstance(calls[0]["args"], dict):
-        return {"ok": False, "note": "no usable first files call"}
-    first = calls[0]["args"]
+    done, note = _run_tools(worker, chat, execute, prompt, max_turns=4)
+    if not done:
+        return {"ok": False, "note": "no usable files call"}
+    first, first_res = done[0]
     lines = len((first.get("content") or "").splitlines())
     if first.get("action") != "write":
         return {"ok": False, "note": "first call was {0!r}, not write".format(first.get("action"))}
+    if not first_res.get("ok"):
+        return {"ok": False, "note": "the service refused the first write: {0}".format(first_res.get("error"))}
     if lines > SECTION_LINES + SECTION_SLACK:
         return {"ok": False, "note": "first write carried {0} lines; asked for at most {1}".format(
             lines, SECTION_LINES)}
-    if any(c["args"] and c["args"].get("action") == "append" for c in calls[1:]):
-        return {"ok": True, "note": "write {0} lines, then append (same turn)".format(lines)}
-    messages += [
-        {"role": "assistant", "content": msg.get("content") or "", "tool_calls": [calls[0]["raw"]]},
-        {"role": "tool", "tool_call_id": calls[0]["id"], "name": "files",
-         "content": json.dumps({"ok": True, "result": {"path": first.get("path"),
-                                                        "bytes": len(first.get("content") or "")}})},
-    ]
-    msg2, _ = chat(worker, messages, tools=_files_tool(), max_tokens=PROBE_TOKENS)
-    nxt = [c for c in _calls(msg2) if isinstance(c["args"], dict)]
-    if not nxt or nxt[0]["args"].get("action") != "append":
-        return {"ok": False, "note": "after a {0}-line write the next call was {1!r}, not append".format(
-            lines, nxt[0]["args"].get("action") if nxt else None)}
-    return {"ok": True, "note": "write {0} lines, then append".format(lines)}
+    appends = [(a, r) for a, r in done[1:] if a.get("action") == "append"]
+    if not appends:
+        return {"ok": False, "note": "after a {0}-line write no append was attempted".format(lines)}
+    good = [r for _a, r in appends if r.get("ok")]
+    if not good:
+        return {"ok": False, "note": "the service refused every append: {0}".format(appends[0][1].get("error"))}
+    try:
+        final = execute("files", {"action": "read", "path": first.get("path") or "numbers.py"})
+        text = (final.get("result") or {}).get("content") or ""
+        ast.parse(text)
+    except SyntaxError as e:
+        return {"ok": False, "note": "the assembled file does not parse: {0}".format(e.msg)}
+    except Exception as e:
+        return {"ok": False, "note": "could not read back the file: {0}".format(str(e)[:120])}
+    total = len(text.splitlines())
+    if total <= lines:
+        return {"ok": False, "note": "the file did not grow past the first write ({0} lines)".format(total)}
+    return {"ok": True, "note": "write {0} lines, {1} guarded append(s) accepted by the service, "
+                                "{2}-line file parses".format(lines, len(good), total)}
 
 
 PROBES = (("format", probe_format), ("tool_call", probe_tool_call),
           ("incremental_write", probe_incremental_write))
 
 
-def probe(worker, chat=None):
-    """Run every probe against `worker`. Never raises: an error is that probe's failure."""
+def probe(worker, chat=None, execute=None):
+    """Run every probe against `worker`. Never raises: an error is that probe's failure.
+
+    Tool probes execute on the configured tool service in a fresh private workspace; when the
+    service is unreachable they FAIL with that reason rather than pass on an imitation."""
     if chat is None:
         import call
 
         def chat(w, messages, tools=None, max_tokens=PROBE_TOKENS):
             return call.chat(w, messages, tools=tools, max_tokens=max_tokens, timeout=180,
                              track=True, profile=True)   # honor max_inflight on a live fleet
-    out = {"worker": worker, "checked": time.strftime("%Y-%m-%dT%H:%M:%S"), "probes": {}}
+    job_id = "workprobe-{0}-{1}".format("".join(ch if ch.isalnum() else "-" for ch in worker),
+                                        time.strftime("%Y%m%d%H%M%S"))
+    if execute is None:
+        try:
+            execute = service_executor(job_id)
+        except Exception as e:
+            reason = "tool service unavailable: {0}".format(str(e)[:120])
+
+            def execute(name, args):
+                raise RuntimeError(reason)
+    out = {"worker": worker, "checked": time.strftime("%Y-%m-%dT%H:%M:%S"), "workspace": job_id,
+           "probes": {}}
     for name, fn in PROBES:
         t = time.time()
         try:
-            res = fn(worker, chat)
+            res = fn(worker, chat) if fn is probe_format else fn(worker, chat, execute)
         except Exception as e:
             res = {"ok": False, "note": "{0}: {1}".format(type(e).__name__, str(e)[:160])}
         res["ms"] = round((time.time() - t) * 1000)

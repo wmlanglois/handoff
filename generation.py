@@ -157,11 +157,23 @@ def apply_request_profile(body, profile, reasoning_style="none"):
         body.setdefault("chat_template_kwargs", {})["enable_thinking"] = think
         if think:
             body.pop("reasoning_budget", None)      # the budget_field style zeroes it only for think-off
-    if think and reasoning_style == "template_kwargs" and profile.get("reasoning_effort"):
+    # reasoning_effort is a chat-template setting (Qwen3.8: low / medium / xhigh). Verified live on a
+    # llama.cpp lane whose reasoning_style is "none" (2026-09-25), so it is applied whenever thinking
+    # is on, not only for the template_kwargs dialect.
+    if think and profile.get("reasoning_effort"):
         body.setdefault("chat_template_kwargs", {})["reasoning_effort"] = profile["reasoning_effort"]
     if think and reasoning_style == "budget_field" and type(profile.get("thinking_budget")) is int:
         body["reasoning_budget"] = profile["thinking_budget"]
     return body
+
+
+def thinking_default(reasoning_style="none"):
+    """The request fragment that turns model thinking OFF, as call.body_for does for chat (#33).
+    Without it the server's own default applies, and Qwen3.x templates default to thinking ON."""
+    frag = {"chat_template_kwargs": {"enable_thinking": False}}
+    if reasoning_style == "budget_field":
+        frag["reasoning_budget"] = 0
+    return frag
 
 
 def response_evidence(response, request):
@@ -189,7 +201,14 @@ def response_evidence(response, request):
         "temperature": request.get("temperature"),
         "sampling": {k: request.get(k) for k in SAMPLING_KEYS if k in request},
         "thinking": (request.get("chat_template_kwargs") or {}).get("enable_thinking"),
-        "response_kind": ("length_limited" if reason == "length" else
+        "reasoning_effort": (request.get("chat_template_kwargs") or {}).get("reasoning_effort"),
+        # Size only, never the text: hidden reasoning that consumes the output budget is otherwise
+        # invisible in the evidence (#33: 132K chars of reasoning, 0 of content, read as "length").
+        "reasoning_chars": len(message.get("reasoning_content") or "") if isinstance(
+            message.get("reasoning_content"), str) else None,
+        "response_kind": ("reasoning_exhausted" if reason == "length" and not message.get("content")
+                          and not message.get("tool_calls") and message.get("reasoning_content") else
+                          "length_limited" if reason == "length" else
                           "tool_calls" if message.get("tool_calls") else
                           "empty_visible_content" if not message.get("content") else "content"),
     }

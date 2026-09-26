@@ -61,12 +61,13 @@ REQUIRED_TOOL_CAPABILITIES = ("length_recovery", "generation_evidence", "increme
 
 def _request_profile_for(worker, w):
     """WORKER_REQUEST_PROFILES[worker] as a request fragment for the tool loop ({} when none)."""
-    from generation import SAMPLING_KEYS, apply_request_profile, worker_request_profile
+    from generation import SAMPLING_KEYS, apply_request_profile, thinking_default, worker_request_profile
     prof = worker_request_profile(worker)
-    if not prof:
-        return {}
-    base = {"temperature": 0.2}
-    body = apply_request_profile(dict(base), prof, w.get("reasoning_style", "none"))
+    style = w.get("reasoning_style", "none")
+    # #33: the tool loop starts from the SAME thinking-off default as chat; a request profile may
+    # turn thinking on (optionally with reasoning_effort) for a lane.
+    base = dict({"temperature": 0.2}, **thinking_default(style))
+    body = apply_request_profile(json.loads(json.dumps(base)), prof, style)
     omit = [k for k in SAMPLING_KEYS if k in prof and prof[k] is None]
     return {"request_overrides": body, "request_omit": omit}
 

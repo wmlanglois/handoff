@@ -251,6 +251,8 @@ evidence the lane is down, so do not re-dispatch to another lane or PARK it as i
 basis. Either ADJUST max_output_tokens DOWN (the harness allows a lower limit when timeouts are recorded)
 so each turn fits the wait and the worker writes in sections, or PARK a question asking the operator to
 set the lane's min_tokens_per_s.
+If the evidence says cut-off turns ran out while THINKING (hidden reasoning, no output), raising the
+limit does not help and ADJUST is refused: the lane's reasoning setting is the operator's to change.
 """
 
 OUTPUT_LIMIT = "output_limit"
@@ -314,7 +316,7 @@ def generation_summary(name):
     tool_ws = re.sub(r"[^A-Za-z0-9_-]", "-", "verified-" + str(name))
     files = sorted(list(root.glob("verified-" + name + "-*.jsonl")) + list(root.glob("tooljob-" + tool_ws + "-*.jsonl")),
                    key=lambda q: q.stat().st_mtime)
-    turns = limited = timeouts = 0
+    turns = limited = timeouts = thinking_cut = reasoning_chars = 0
     max_requested = max_prompt = timeout_tokens = 0
     worker = runtime = None
     for f in files:
@@ -335,8 +337,12 @@ def generation_summary(name):
             elif ev == "generation" and isinstance(row.get("evidence"), dict):
                 e = row["evidence"]
                 turns += 1
-                if e.get("response_kind") == "length_limited" or e.get("finish_reason") == "length":
+                if e.get("response_kind") in ("length_limited", "reasoning_exhausted") or e.get("finish_reason") == "length":
                     limited += 1
+                if e.get("response_kind") == "reasoning_exhausted":
+                    thinking_cut += 1
+                if isinstance(e.get("reasoning_chars"), int):
+                    reasoning_chars += e["reasoning_chars"]
                 if isinstance(e.get("requested_max_tokens"), int):
                     max_requested = max(max_requested, e["requested_max_tokens"])
                 pt = (e.get("usage") or {}).get("prompt_tokens")
@@ -353,7 +359,13 @@ def generation_summary(name):
     ceiling = generation.output_ceiling(worker, max_prompt or None) if worker else 0
     facts = {"turns": turns, "length_limited": limited, "max_requested": max_requested, "worker": worker,
              "ctx": ctx, "max_prompt": max_prompt or None, "ceiling": ceiling, "pinned": pinned,
-             "runtime": runtime, "timeouts": timeouts, "timeout_tokens": timeout_tokens or None}
+             "runtime": runtime, "timeouts": timeouts, "timeout_tokens": timeout_tokens or None,
+             "reasoning_exhausted": thinking_cut, "reasoning_chars": reasoning_chars}
+    if thinking_cut or reasoning_chars:
+        tail_think = ("; {0} cut-off turn(s) spent the whole limit on hidden THINKING with no output; {1} "
+                      "chars of hidden reasoning recorded".format(thinking_cut, reasoning_chars))
+    else:
+        tail_think = ""
     tail = ("; {0} request timeouts waiting for up to {1} output tokens (the harness stopped waiting, "
             "not a down lane)".format(timeouts, timeout_tokens or "?")) if timeouts else ""
     if not turns:
@@ -368,7 +380,7 @@ def generation_summary(name):
                 head, max_requested or "unknown", worker or "unknown", ctx or "unknown",
                 max_prompt or "unknown", ceiling or "unknown",
                 "PINNED by operator at {0}".format(pinned) if pinned else "not pinned (ADJUST may raise it)",
-                runtime or "n/a")) + tail, facts
+                runtime or "n/a")) + tail + tail_think, facts
 
 
 def failure_text(name, limit=1400):
@@ -824,6 +836,10 @@ def validate(decision, delta):
             if n < 256:
                 return False, "ADJUST of {0!r}: {1} is too small to deliver anything useful".format(name, n)
             return True, "ok"   # lowering a limit that timed out: each turn must fit the wait
+        if f["length_limited"] and f["reasoning_exhausted"] >= f["length_limited"]:
+            return False, ("ADJUST of {0!r} refused: every cut-off turn ran out while THINKING (hidden "
+                           "reasoning, no output); a higher limit buys more thinking, not code. PARK a "
+                           "question for the operator to lower the lane's reasoning (request profile)".format(name))
         if not f["length_limited"]:
             return False, ("ADJUST of {0!r} refused: no length-limited generation is recorded for it; "
                            "raise a budget only on evidence that the output limit cut it off".format(name))

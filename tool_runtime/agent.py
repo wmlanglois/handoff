@@ -157,6 +157,10 @@ def run(dispatcher, execution_id, job, worker):
                 "model": worker["model"], "messages": messages, "tools": tools,
                 "tool_choice": "auto", "max_tokens": int(job.get("max_tokens", 1400)),
                 "temperature": 0.2, "stream": False,
+                # #33: thinking OFF unless the harness's request profile says otherwise. Without this
+                # the server default applied -- thinking ON for Qwen3.x -- and hidden reasoning
+                # consumed the output budget and the context window.
+                "chat_template_kwargs": {"enable_thinking": False},
             }
             # Operator request profile (sampling/thinking) resolved by the harness; omitted keys fall
             # back to the server's own configured value.
@@ -168,11 +172,16 @@ def run(dispatcher, execution_id, job, worker):
             # fit, SEND a compacted view (earlier file bodies -> reread references); the checkpoint
             # keeps the full conversation as the recoverable record.
             budget = int(worker.get("ctx", 8192)) - request["max_tokens"] - 512
-            view, replaced = compact_view(messages, tools, budget)
+            # Earlier hidden reasoning is evidence, not working context: it stays in the checkpoint
+            # and is not re-sent (#33: it was ~500K chars across one run's histories).
+            sent = [{k: v for k, v in m.items() if k != "reasoning_content"} if m.get("reasoning_content") else m
+                    for m in messages]
+            request["messages"] = sent
+            view, replaced = compact_view(sent, tools, budget)
             if replaced:
                 request["messages"] = view
                 compactions.append({"round": rounds, "replaced": replaced,
-                                    "full_tokens_est": _estimate(messages, tools),
+                                    "full_tokens_est": _estimate(sent, tools),
                                     "sent_tokens_est": _estimate(view, tools)})
             estimated_input = _estimate(request["messages"], tools)
             if estimated_input + request["max_tokens"] + 512 > int(worker.get("ctx", 8192)):

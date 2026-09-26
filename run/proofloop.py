@@ -408,12 +408,101 @@ def milestone_completion(candidate, command, deliverable_dests, timeout=20):
         shutil.rmtree(probe, ignore_errors=True)
 
 
-def run_journey(candidate, command):
-    """Fresh process. command is an argument list."""
-    proc = subprocess.run(command, cwd=str(candidate), capture_output=True, text=True, timeout=30)
-    transcript = (proc.stdout or "") + (proc.stderr or "")
-    return {"ok": proc.returncode == 0, "code": proc.returncode, "transcript": transcript,
-            "command": list(command)}
+#: How long a launch command may take to either exit or become ready.
+JOURNEY_READY_S = 30
+#: How long a still-running service may take to answer its readiness probe.
+JOURNEY_PROBE_S = 60
+
+
+def _stop_tree(proc):
+    """Stop the launched process and anything it started (a server may spawn workers)."""
+    if proc.poll() is not None:
+        return
+    try:
+        if sys.platform.startswith("win"):
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=20)
+        else:
+            proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        pass
+
+
+def _probe_once(probe):
+    """(ok, observed) for one readiness probe: {"url": ..., "expect": 200, "contains": "..."}."""
+    import urllib.error
+    import urllib.request
+    url = str(probe.get("url") or "")
+    if not url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]")):
+        return False, "probe url must be loopback: {0!r}".format(url)
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            body = r.read(4000).decode("utf-8", "replace")
+            status = r.status
+    except urllib.error.HTTPError as e:
+        status, body = e.code, ""
+    except Exception as e:
+        return False, "no answer ({0})".format(type(e).__name__)
+    want = int(probe.get("expect") or 200)
+    if status != want:
+        return False, "GET {0} -> {1} (expected {2})".format(url, status, want)
+    if probe.get("contains") and str(probe["contains"]) not in body:
+        return False, "GET {0} -> {1} but body lacks {2!r}".format(url, status, probe["contains"])
+    return True, "GET {0} -> {1}".format(url, status)
+
+
+def run_journey(candidate, command, probe=None, ready_s=None, probe_s=None):
+    """Run the approved launch command in a fresh process and say whether the milestone works.
+
+    Never raises on a slow command (#41). A command that EXITS within the readiness window is
+    judged by its exit code, as before. A command still running at the window is a long-running
+    service: it passes only if its declared readiness `probe` answers as expected; with no probe
+    it is stopped and reported not verified -- staying alive is not proof it works. The process
+    tree is always stopped afterwards."""
+    import tempfile
+    import time as _time
+    ready_s = JOURNEY_READY_S if ready_s is None else ready_s
+    probe_s = JOURNEY_PROBE_S if probe_s is None else probe_s
+    out = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(command, cwd=str(candidate), stdout=out, stderr=subprocess.STDOUT, text=True)
+    t0 = _time.time()
+    while proc.poll() is None and _time.time() - t0 < ready_s:
+        if probe:
+            ok, observed = _probe_once(probe)
+            if ok:
+                break
+        _time.sleep(0.5)
+    result = {"command": list(command)}
+    if proc.poll() is not None:
+        result.update(ok=proc.returncode == 0, code=proc.returncode, mode="exited")
+        notes = ""
+    elif probe:
+        deadline = t0 + ready_s + probe_s
+        ok, observed = _probe_once(probe)
+        while not ok and _time.time() < deadline and proc.poll() is None:
+            _time.sleep(1)
+            ok, observed = _probe_once(probe)
+        if proc.poll() is not None and not ok:
+            result.update(ok=False, code=proc.returncode, mode="service-exited")
+        else:
+            result.update(ok=ok, code=None, mode="service")
+        notes = "\n[journey] service still running after {0:.0f}s; readiness probe: {1}".format(
+            _time.time() - t0, observed)
+        _stop_tree(proc)
+    else:
+        result.update(ok=False, code=None, mode="service-unverified",
+                      reason="the launch command was still running after {0}s and the milestone declares "
+                             "no readiness probe; a long-running service cannot be verified by staying "
+                             "alive -- declare milestone.probe (e.g. a loopback /health URL)".format(ready_s))
+        notes = "\n[journey] " + result["reason"]
+        _stop_tree(proc)
+    out.seek(0)
+    result["transcript"] = (out.read() or "")[-20000:] + notes
+    out.close()
+    return result
 
 
 def spark_note(journey, files, finding):

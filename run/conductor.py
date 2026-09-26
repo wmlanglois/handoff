@@ -1595,7 +1595,7 @@ def derive_map_spec(goal_id):
     # Runtime components of the playable slice: exclude test outcomes (they are not launched, they are
     # a separate later check), but keep them in the plan. A launcher component IS a runtime component
     # AND the milestone entry point.
-    components, launcher_dest = [], None
+    components, launcher_dest, launcher_probe = [], None, None
     for n, c in items:
         dest = (c.get("dest") or c.get("artifact") or "").strip()
         if _is_test(dest, n):
@@ -1615,6 +1615,7 @@ def derive_map_spec(goal_id):
         components.append(comp)
         if _is_launcher(dest, c):
             launcher_dest = dest
+            launcher_probe = c.get("probe") if isinstance(c.get("probe"), dict) else None
 
     proot = Path(doc.get("project_root") or ".")
     baseline_launcher = next((cand for cand in ("launch.py", "main.py", "app.py", "run.py")
@@ -1632,8 +1633,10 @@ def derive_map_spec(goal_id):
         requirement = proofloop.milestone_text(doc.get("scope", {}).get("text") or doc.get("goal") or "")
     except Exception:
         requirement = "the approved launched-and-working milestone"
-    return {"components": components,
-            "milestone": {"id": "slice", "command": command, "requirement": requirement}}
+    milestone = {"id": "slice", "command": command, "requirement": requirement}
+    if launcher_dest and launcher_probe:
+        milestone["probe"] = launcher_probe          # #41: how to verify a long-running launcher
+    return {"components": components, "milestone": milestone}
 
 
 def autonomous_launch(package, *, decisions, seconds):
@@ -1904,7 +1907,8 @@ def consume_milestone(goal_id, *, runs_root=None):
         })
         return {"done": False, "ready": False, "candidate": built["candidate"],
                 "boundary": "waiting on {0}".format(", ".join(missing))}
-    journey = proofloop.run_journey(built["candidate"], command)
+    journey = proofloop.run_journey(built["candidate"], command,
+                                    probe=(spec.get("milestone") or {}).get("probe"))
     finding = ask_spark(journey, {path: blobs[path].decode("utf-8", "replace") for path in blobs})
     note = proofloop.spark_note(journey, set(blobs), finding)
     import hashlib

@@ -1289,6 +1289,45 @@ def _cmd_scope(a):
     print("review it, then:\n  python run/conductor.py approve-scope {0} --as <you>".format(package))
 
 
+DELEGATION_COVERS = ("scope (generated from CONFIRMED intake when missing, then approved)",
+                     "plan approval", "interface-map approval")
+DELEGATION_NEVER = ("intake answers (never invented; unconfirmed intake stops the run)",
+                    "never-rules and the recorded decision/time budgets",
+                    "operator-pinned output limits and server/fleet settings",
+                    "questions an assignment PARKS for the operator",
+                    "publishing, pushing or anything outside the project")
+
+
+def delegation_summary(delegate):
+    """What a standing --delegate approves on this run and what still needs a human (#13)."""
+    if not delegate:
+        return ("no --delegate: the run stops for a human at scope, plan and map approval")
+    return ("standing delegate {0} approves: {1}.\nstill needs a human: {2}.".format(
+        delegate, "; ".join(DELEGATION_COVERS), "; ".join(DELEGATION_NEVER)))
+
+
+def delegated_scope(package, delegate, *, produce=None, echo=print):
+    """With a standing delegate and no scoped.md, write the scope from CONFIRMED intake through the
+    ordinary scope path (#13). Returns True when a scope now exists. Unconfirmed intake is a human
+    stop: delegation approves generated pages, it does not answer the questions they come from."""
+    import intake
+    import projectpkg
+    package = Path(package)
+    if (package / "scoped.md").is_file():
+        return True
+    name = projectpkg.load_project(package).get("name") or "project"
+    st = projectpkg.intake_state(package, name)
+    if st is None or not intake.is_done(st):
+        missing = intake.missing(st) if st is not None else ["(no intake recorded)"]
+        echo("stopped: no scoped.md, and the intake is not confirmed ({0} unanswered). Delegation does "
+             "not answer intake questions; confirm them, then re-run.".format(
+                 ", ".join(str(m) for m in list(missing)[:8]) or "?"))
+        return False
+    echo("no scoped.md: writing it from the confirmed intake (standing delegate {0}).".format(delegate))
+    (produce or _produce_scope)(package, name)
+    return (package / "scoped.md").is_file()
+
+
 def _cmd_autonomous(a):
     """Operator entry. Prints the recorded budgets, then runs the loop under those budgets."""
     import orchestrate
@@ -1301,6 +1340,9 @@ def _cmd_autonomous(a):
     # and walk away" run always stopped here for a human. A standing --delegate is the human's
     # up-front approval of the exact scoped.md bytes, exactly like the plan and map gates below;
     # the budget, never-rules and consequential sign-offs stay hard bounds regardless.
+    print(delegation_summary(delegate))
+    if delegate and not delegated_scope(package, delegate):
+        raise SystemExit(2)
     if delegate and (package / "scoped.md").is_file() and not projectpkg.approval_matches(package):
         projectpkg.approve_scope(package, delegate, note="standing --delegate (unattended run)")
         print("scoped.md AUTO-APPROVED by standing delegate {0}.".format(delegate))
@@ -1569,7 +1611,8 @@ def autonomous_launch(package, *, decisions, seconds):
     package = Path(package)
     scope = package / "scoped.md"
     if not scope.is_file():
-        raise SystemExit("no scoped.md")
+        raise SystemExit("no scoped.md: write it with `conductor.py scope <package>` and approve it, or "
+                         "pass --delegate <you> to generate it from confirmed intake")
     if not projectpkg.approval_matches(package):
         raise SystemExit("scoped.md is not approved at its current bytes")
     page = scope.read_bytes().decode("utf-8")

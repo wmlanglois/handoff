@@ -1248,7 +1248,72 @@ def challenge_root(goal_id, target):
     return fleet_runs_root() / ("verified-" + rid)
 
 
-def challenge(decision, delta, worker=SKEPTIC_WORKER, root=None, rounds=2, artifact_root=None):
+#: Tool rounds the decision skeptic gets. It was 2 (#45): list + grep, and it never read the file.
+CHALLENGE_ROUNDS = 6
+
+
+def _challenge_target(decision, delta):
+    """The assignment a decision is about: named, or (INVESTIGATE/QUESTION) the latest on its criterion."""
+    name = decision.get("assignment")
+    if name or not delta.get("goal_id") or not decision.get("criterion_id"):
+        return name
+    try:
+        assignments = goals.state(delta["goal_id"]).get("assignments") or {}
+    except Exception:
+        return None
+    on = [(a.get("added") or "", n) for n, a in assignments.items()
+          if (a.get("contract") or {}).get("criterion_id") == decision["criterion_id"]]
+    return max(on)[1] if on else None
+
+
+def challenge_contract(decision, delta, target=None):
+    """The acceptance bar the skeptic compares the artifact against (#45).
+
+    The skeptic used to see the decision and bare criterion ids only -- never the oracle, the
+    interface or the failure output the architect sees -- so it challenged blind. The contract is
+    the bar, not rationale; design docs stay out (SYSTEM_CHALLENGE)."""
+    target = target or _challenge_target(decision, delta)
+    if not target or not delta.get("goal_id"):
+        return ""
+    try:
+        st = goals.state(delta["goal_id"])
+        a = (st.get("assignments") or {}).get(target) or {}
+    except Exception:
+        return ""
+    c = a.get("contract") or {}
+    crit = next((x for x in (st.get("criteria") or []) if x.get("id") == c.get("criterion_id")), {})
+    lines = ["ACCEPTANCE CONTRACT for assignment {0} (the bar the artifact must meet):".format(target)]
+    if crit.get("text"):
+        lines.append("- Criterion {0}: {1}".format(crit.get("id"), str(crit["text"])[:600]))
+    deliverable = c.get("dest") or c.get("artifact")
+    if deliverable:
+        lines.append("- Deliverable file: " + str(deliverable))
+    for k in ("provides", "consumer"):
+        if str(c.get(k) or "").strip():
+            lines.append("- Interface {0}: {1}".format(k, str(c[k]).strip()[:600]))
+    for d in (c.get("done_when") or [])[:8]:
+        lines.append("- Done when: " + str(d)[:300])
+    if str(c.get("oracle") or "").strip():
+        lines.append("- Oracle (the executable check):\n" + str(c["oracle"])[:3000])
+    try:
+        fail = failure_text(a.get("run_id") or goals.run_id(delta["goal_id"], target), limit=900)
+    except Exception:
+        fail = ""
+    if fail:
+        lines.append("- Last run's failure output:\n" + fail[:900])
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _root_has_deliverables(root):
+    skip = {".receipts", "__pycache__", "_carry"}
+    try:
+        return any(p.is_file() and not (set(p.relative_to(root).parts) & skip)
+                   for p in Path(root).rglob("*"))
+    except OSError:
+        return True
+
+
+def challenge(decision, delta, worker=SKEPTIC_WORKER, root=None, rounds=CHALLENGE_ROUNDS, artifact_root=None):
     """Let the existing skeptic question the ARCHITECT's conclusion.
 
     Advisory by design. The skeptic is the jury; recording its doubt beside the decision is the
@@ -1256,7 +1321,7 @@ def challenge(decision, delta, worker=SKEPTIC_WORKER, root=None, rounds=2, artif
     from log import logger
     emit = logger("skeptic-challenge", echo=False)
     evidence_root = artifact_root or root
-    target = decision.get("assignment")
+    target = _challenge_target(decision, delta)
     summary = "No assignment-specific generation evidence supplied."
     if target and delta.get("goal_id"):
         try:
@@ -1284,6 +1349,14 @@ def challenge(decision, delta, worker=SKEPTIC_WORKER, root=None, rounds=2, artif
               "\nAssess a capacity adjustment using this evidence. An unfinished or absent artifact "
               "after truncation is not by itself a reason to reject an adjustment. If evidence is "
               "unavailable say so; do not infer missing work from missing access.")
+    contract = challenge_contract(decision, delta, target)
+    if contract:
+        claim += ("\n\n" + contract + "\nCompare the artifact under your root against this contract: "
+                  "every name, argument and return the oracle uses must match the code (file:line).")
+    if not _root_has_deliverables(evidence_root):
+        claim += ("\n\nNOTE: your review root holds no deliverable files yet (nothing has been promoted). "
+                  "That absence is not evidence about the work; say review unavailable for the artifact "
+                  "and challenge the decision against the contract above instead.")
     try:
         # Root the skeptic AT THE ARTIFACT. The first live run rooted it at the repo, where
         # the delivered file does not exist, and it produced three confident challenges

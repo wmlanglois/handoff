@@ -1318,7 +1318,15 @@ def _cmd_autonomous(a):
         import preflight
         need_tools = any((rec.get("contract") or {}).get("tools")
                          for rec in (goals.state(gid).get("assignments") or {}).values())
-        ok, reason, pf_rows = preflight.gate(workers, need_tool_service=need_tools)
+        _texts = [json.dumps(rec.get("contract") or {})
+                  for rec in (goals.state(gid).get("assignments") or {}).values()]
+        ok, reason, pf_rows = preflight.gate(workers, need_tool_service=need_tools,
+                                             tool_host_modules=preflight.modules_named(_texts))
+        for _r in pf_rows:
+            if _r.get("role") == "tool-host":
+                print("tool host: python {0} at {1}; checks need {2}{3}".format(
+                    _r.get("version", "?"), _r.get("python", "?"), ", ".join(_r.get("required") or []) or "stdlib only",
+                    "; MISSING " + ", ".join(_r["missing"]) if _r.get("missing") else ""))
         print("tool service: required" if need_tools else "tool service: not-needed (not probed)")
         import fleet as _fleet
         for _k, _v in _fleet.state_paths().items():

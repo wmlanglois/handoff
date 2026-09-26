@@ -18,7 +18,7 @@ runner, not here; preflight is the between-iterations idle check.
     python check/preflight.py            # all workers
     python check/preflight.py --canary-timeout 30
 """
-import argparse, json, os, sys, time, urllib.request
+import argparse, json, os, re, secrets, sys, time, urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -105,6 +105,48 @@ def probe_tool_service(emit):
         emit("tool-service-down", url=TOOL_SERVICE["url"], error=repr(e))
         return {"tool_service": "down"}
 
+_RUNNER = re.compile(r"\bpython3?(?:\.exe)?\s+-m\s+([A-Za-z_]\w*)")
+
+
+def modules_named(texts):
+    """Third-party modules the plan's checks RUN as `python -m <module>` (pytest, hypothesis, ...),
+    plus the operator's TOOL_HOST_REQUIRED_MODULES. Stdlib runners (unittest) are dropped. Imports
+    inside check text are not guessed at: they are usually the project's own modules."""
+    from fleet import setting
+    found = set(setting("TOOL_HOST_REQUIRED_MODULES", []) or [])
+    for t in texts:
+        found.update(m.split(".")[0] for m in _RUNNER.findall(t or ""))
+    std = getattr(sys, "stdlib_module_names", ())
+    return sorted(m for m in found if m not in std)
+
+
+def probe_tool_host(emit, modules):
+    """Run a probe through the tool service's own python_run, so the answer is about the
+    interpreter worker code and self-checks actually execute on -- not the conductor's."""
+    code = ("import importlib.util, json, sys\n"
+            "mods = {0!r}\n"
+            "print(json.dumps({{'python': sys.executable, 'version': sys.version.split()[0],"
+            " 'missing': [m for m in mods if importlib.util.find_spec(m) is None]}}))").format(list(modules))
+    try:
+        token = Path(TOOL_SERVICE["token_file"]).read_text(encoding="utf-8").strip()
+        body = json.dumps({"job_id": "preflight-probe", "call_id": "deps-" + secrets.token_hex(6),
+                           "name": "python_run", "arguments": {"code": code}}).encode()
+        req = urllib.request.Request(TOOL_SERVICE["url"] + "/call", data=body, method="POST",
+                                     headers={"Authorization": "Bearer " + token,
+                                              "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+        out = (resp.get("result") or {}) if resp.get("ok") else {}
+        info = json.loads((out.get("stdout") or "").strip().splitlines()[-1])
+    except Exception as e:
+        emit("tool-host-probe-failed", error=repr(e))
+        return {"verdict": "probe-failed", "error": repr(e)[:200], "required": list(modules)}
+    info["required"] = list(modules)
+    info["verdict"] = "missing-modules" if info.get("missing") else "ok"
+    emit("tool-host", **info)
+    return info
+
+
 def tool_runtime_info():
     """Which tool runtime tool jobs will use and what it declares (see run/tooljob.runtime_info)."""
     run_dir = str(Path(__file__).resolve().parent.parent / "run")
@@ -114,7 +156,7 @@ def tool_runtime_info():
     return tooljob.runtime_info()
 
 
-def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True):
+def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True, tool_host_modules=()):
     """Non-exiting preflight for one run. Returns (ok, reason, rows).
 
     Probes the run's coding lanes AND the skeptic (run_goal's own health check covers only
@@ -159,6 +201,16 @@ def gate(worker_names, canary_timeout=25, emit=None, need_tool_service=True):
         ts = probe_tool_service(emit)
         if ts["tool_service"] not in ("ok",):
             reasons.append("tool-service: {0}".format(ts["tool_service"]))
+        if ts["tool_service"] == "ok":
+            th = probe_tool_host(emit, tool_host_modules)
+            rows.append({"worker": "(tool-host)", "role": "tool-host", **th})
+            if th["verdict"] != "ok" and not os.environ.get("HANDOFF_ALLOW_MISSING_TOOL_DEPS"):
+                reasons.append(
+                    "tool-host: python {0} at {1} lacks {2}; install them there or set "
+                    "HANDOFF_ALLOW_MISSING_TOOL_DEPS=1".format(th.get("version", "?"), th.get("python", "?"),
+                                                                ", ".join(th.get("missing") or []))
+                    if th["verdict"] == "missing-modules" else
+                    "tool-host: could not run the dependency probe ({0})".format(th.get("error")))
         rt = tool_runtime_info()
         rows.append({"worker": "(tool-runtime)", "role": "tool-runtime",
                      "verdict": "ok" if not rt.get("missing") else "degraded", **rt})

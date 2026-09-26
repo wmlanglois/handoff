@@ -317,6 +317,10 @@ def generation_summary(name):
     files = sorted(list(root.glob("verified-" + name + "-*.jsonl")) + list(root.glob("tooljob-" + tool_ws + "-*.jsonl")),
                    key=lambda q: q.stat().st_mtime)
     turns = limited = timeouts = thinking_cut = reasoning_chars = 0
+    #: Effort levels whose thinking has a ceiling. At these, a thinking cut-off means the limit was
+    #: too small for bounded reasoning PLUS code, so raising it helps (A/B 2026-09-25: "low" thought
+    #: ~1,400 tokens per turn and filled a 1,400 limit exactly). Unset / "xhigh" is unbounded.
+    bounded_cut = 0
     max_requested = max_prompt = timeout_tokens = 0
     worker = runtime = None
     for f in files:
@@ -341,6 +345,8 @@ def generation_summary(name):
                     limited += 1
                 if e.get("response_kind") == "reasoning_exhausted":
                     thinking_cut += 1
+                    if e.get("reasoning_effort") in ("low", "medium"):
+                        bounded_cut += 1
                 if isinstance(e.get("reasoning_chars"), int):
                     reasoning_chars += e["reasoning_chars"]
                 if isinstance(e.get("requested_max_tokens"), int):
@@ -360,7 +366,8 @@ def generation_summary(name):
     facts = {"turns": turns, "length_limited": limited, "max_requested": max_requested, "worker": worker,
              "ctx": ctx, "max_prompt": max_prompt or None, "ceiling": ceiling, "pinned": pinned,
              "runtime": runtime, "timeouts": timeouts, "timeout_tokens": timeout_tokens or None,
-             "reasoning_exhausted": thinking_cut, "reasoning_chars": reasoning_chars}
+             "reasoning_exhausted": thinking_cut, "reasoning_chars": reasoning_chars,
+             "bounded_reasoning_exhausted": bounded_cut}
     if thinking_cut or reasoning_chars:
         tail_think = ("; {0} cut-off turn(s) spent the whole limit on hidden THINKING with no output; {1} "
                       "chars of hidden reasoning recorded".format(thinking_cut, reasoning_chars))
@@ -836,7 +843,10 @@ def validate(decision, delta):
             if n < 256:
                 return False, "ADJUST of {0!r}: {1} is too small to deliver anything useful".format(name, n)
             return True, "ok"   # lowering a limit that timed out: each turn must fit the wait
-        if f["length_limited"] and f["reasoning_exhausted"] >= f["length_limited"]:
+        # Refuse only UNBOUNDED thinking cut-offs: there, a higher limit buys more thinking. A cut-off
+        # at a bounded effort level (low/medium) means reasoning plus code did not fit -- raise it.
+        unbounded = f["reasoning_exhausted"] - f.get("bounded_reasoning_exhausted", 0)
+        if f["length_limited"] and f["reasoning_exhausted"] >= f["length_limited"] and unbounded > 0:
             return False, ("ADJUST of {0!r} refused: every cut-off turn ran out while THINKING (hidden "
                            "reasoning, no output); a higher limit buys more thinking, not code. PARK a "
                            "question for the operator to lower the lane's reasoning (request profile)".format(name))

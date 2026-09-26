@@ -1,5 +1,9 @@
 # Local environment requirements and readiness
 
+September 26 operator update: [current implementation](IMPLEMENTATION-STATUS.md) and [change rationale](CHANGE-RATIONALE.md) reconcile the latest fixes. Roles and readiness can persist across projects; readiness remains advisory by default and is not yet used for lane preference (#40). Contract callback completeness (#39) and delivery of public interfaces (#42) are harness responsibilities, not reasons to retune a server.
+
+Chat and bundled tools now share a 4,096-token default output allowance, independently of server context. Explicit output pins and request profiles take precedence. Bundled tools default thinking off and omit prior hidden reasoning from active requests while retaining evidence; operator profiles may override. Budget decisions must inspect actual termination/usage evidence, not infer model capacity from response length. Active-context compaction retains the full disk checkpoint; it does not prove server KV-cache reuse. No server settings are changed by these defaults.
+
 For an environment already configured in LiteLLM, use the optional
 [discovery/import guide](LITELLM-IMPORT.md). It previews aliases and imports one
 through the existing registry after explicit generation qualification. Existing

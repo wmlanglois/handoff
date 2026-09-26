@@ -1,152 +1,59 @@
-# Implementation status and research connections
+# Implementation status and issue map
 
-## Local follow-up: skeptic evidence connection (#32)
+Reconciled September 26, 2026 against runtime [0dc9256](https://github.com/wmlanglois/handoff/commit/0dc9256). [Change rationale](CHANGE-RATIONALE.md) explains why behavior changed; [FEATURES](FEATURES.md) and the [overnight guide](OVERNIGHT.md) describe operation.
 
-Bundled tool drafts now have bounded, receipt-checked pre-oracle coaching in the
-existing conversation. Architect challenges resolve tools workspaces and include
-generation evidence; missing roots report unavailable instead of falling back to
-the repo. Structured private review logs complement SQLite job/lock records.
-External runtimes have an explicit unsupported-coaching event, not an invented pass.
-Offline tests exercise real bundled tool/service edits and receipt resolution with
-scripted model/reviewer responses. No live trial was changed by this patch.
+**Implemented** means code and an exercised offline path exist. **Live-validated** requires the relevant real environment/model path. An open issue can contain implemented work plus outstanding acceptance criteria. A closed narrow bug does not certify the whole application.
 
-## Local follow-up: LiteLLM discovery/import (#31)
+## Planning, startup and continuation
 
-`run/litellm_import.py` previews an explicitly supplied YAML/JSON config or gateway
-model list and qualifies one selected alias into the existing registry on `--apply`.
-Gateway auth uses environment references through chat, preflight and bundled tools.
-No server changes, role selection, provider-setting translation or readiness-cache
-automation. The [guide](LITELLM-IMPORT.md) lists commands and dependencies. Offline
-fake-HTTP integration tests cover the connection paths; no live LiteLLM instance
-has been exercised. Publication status belongs in #31; this paragraph does not
-claim this local change has been pushed.
-
-Reconciled September 25, 2026 against runtime commit [`221f434`](https://github.com/wmlanglois/handoff/commit/221f434afe5815670a7d72eedf0dba88f6062e1c). This page maps shipped behavior to remaining work; it is not a claim of universal platform support, live endurance success, or measured productivity benefit.
-
-## Shipped corrections
-
-| Area | Current behavior | Tracking |
+| Tracking | Implemented | Remaining boundary |
 |---|---|---|
-| Review cadence | Q0 does not silently reduce the chosen E3 cadence. | [#2](https://github.com/wmlanglois/handoff/issues/2) |
-| First-use choice | Guided questions, brief context, and no-token defer are explicit; paths and project kind are shown. | [#3](https://github.com/wmlanglois/handoff/issues/3) |
-| Plan validation | Structural dependency/launcher checks reject inadmissible proposals; rejection can stay on the same goal. | [#4](https://github.com/wmlanglois/handoff/issues/4) |
-| Supplied contracts | `--plan-file` imports JSON outcomes instead of asking a model to recreate them. It is not Markdown-plan compilation. | [#5](https://github.com/wmlanglois/handoff/issues/5) |
-| Never-rule check | Dispatch prefers the stored contract over a scope-expanded card, avoiding the scope's own prohibition being treated as an action. | [#8](https://github.com/wmlanglois/handoff/issues/8) |
-| Delegated map resume | An existing proposal no longer skips the approval step. While no approved map exists, derive from the current approved plan; failed derivation stops. The downstream map validity gate still applies. | [#7](https://github.com/wmlanglois/handoff/issues/7) |
-| Registry configuration | Sample has the version/workers envelope and non-reserved names; `FLEET_REGISTRY` permits explicit project-local storage. | [#15](https://github.com/wmlanglois/handoff/issues/15) |
-| Returning workers | `connect` checks saved endpoints; failed or unchecked saved entries do not count as ready. | [#16](https://github.com/wmlanglois/handoff/issues/16), duplicate [#17](https://github.com/wmlanglois/handoff/issues/17) |
-| Preflight | Autonomous checks selected lanes and named skeptic; tools additionally require lane tool-call capability and the service. An empty skeptic warns. | [#12](https://github.com/wmlanglois/handoff/issues/12), [#22](https://github.com/wmlanglois/handoff/issues/22) |
-| Worker tool policy | Explicit `--tool-mode chat-only\|tools` persists through planning, repairs, follow-ons, cards and resume; approved work cannot be silently toggled. | [#22](https://github.com/wmlanglois/handoff/issues/22) |
-| Oracle filter | Static AST-based analysis replaces the regex false positive on expressions such as `value == 42 or 1 == 2`. It does not certify full behavioral coverage. | [#18](https://github.com/wmlanglois/handoff/issues/18) |
+| [#2–#5](https://github.com/wmlanglois/handoff/issues/5) | Explicit intake choice, requested cadence preserved, structural plan checks, supplied JSON contracts. | Imported contracts still go through gates; arbitrary Markdown is not JSON. |
+| [#6](https://github.com/wmlanglois/handoff/issues/6), closed | Machine-checkable seeded goal criteria reach planning with original IDs; batch seed criteria replace intake packet criteria. | Milestone, human-only and empty-text criteria are deliberately not packet-planned. |
+| [#7](https://github.com/wmlanglois/handoff/issues/7), open | Overnight controller authorizes and advances dependent packages under a cumulative budget, records stops and resumes durable state. | Live multi-milestone proof remains. Baseline inheritance copies only the last listed dependency, not parallel checkpoint merging; blocked milestones are not reset on rerun. |
+| [#9](https://github.com/wmlanglois/handoff/issues/9), closed | CLI autonomous/overnight launch from content-addressed runtime copies, including worker subprocess source. | External settings, inference services and separately started tool service are outside isolation. The manual fingerprint command is narrower. |
+| [#11](https://github.com/wmlanglois/handoff/issues/11), open | Registry role persistence and guided/brief start role canaries before intake/planner spending. Missing roles get setup instructions. | Clean-environment live first-use through dispatch remains; not a complete installation wizard. |
+| [#13](https://github.com/wmlanglois/handoff/issues/13), open | Delegated startup generates missing scope from confirmed intake and uses scope/plan/map approvals. | Live missing-scope-to-dispatch demonstration remains. Unconfirmed answers/human-only sign-offs still stop. |
+| [#21](https://github.com/wmlanglois/handoff/issues/21), open | Structured Markdown items compile into batches, packages and item status; IDs/dependencies retained. | Live planner/gate batch proof remains. Packages recompile at default six-item size; unparsed/not-compiled entries need resolution first. Not a free-form document interpreter. |
 
-Issue #18's historical wording conflates existence/shape checks with tautologies. Such checks can fail and may be appropriate to a contract; they are not evidence of all application behavior. Mechanical checks, skeptical questions, acceptance receipts, and integration journeys have different roles.
+Within-goal E3=D is cadence, not cross-milestone authorization. Use the explicit overnight controller for the latter. A supplied 60-item design is not a missing user plan merely because it needs structured conversion.
 
-## Remaining connections
+## Environment, tools and evidence
 
-Implemented correction: [#26](https://github.com/wmlanglois/handoff/issues/26)
-delivers hash-checked carry text to chat-only repair/revisit requests and protects it from
-context trimming. Offline request-boundary tests cover all three repair constructors;
-no live repair success is claimed. Worker readiness/profiles remain in
-[#25](https://github.com/wmlanglois/handoff/issues/25), and generation termination evidence
-remains in [#27](https://github.com/wmlanglois/handoff/issues/27).
-
-| Issue | What exists | What remains |
+| Tracking | Implemented | Remaining boundary |
 |---|---|---|
-| [#6](https://github.com/wmlanglois/handoff/issues/6) | Diagnostic for extra uncovered goal criteria after a successful intake-based plan. | Pass authorized seeded criteria into planning or explicitly reject them before model calls; do not leave hidden unplannable state. |
-| [#7](https://github.com/wmlanglois/handoff/issues/7) | Within-goal execution, repairs, cumulative goal budget, delegated approval gates. | Durable cross-milestone continuation under one project authorization/budget, including restart and remaining backlog. D does not currently add this over C. |
-| [#9](https://github.com/wmlanglois/handoff/issues/9) | Separate-checkout guidance and a manual `run/` fingerprint. | Enforced stable runtime identity/isolation across the controller and all subprocesses. |
-| [#11](https://github.com/wmlanglois/handoff/issues/11) | Separate connection helper and documented role settings. | Guided `start` connection/setup and persistent explicit role selection, verified from a clean environment. |
-| [#13](https://github.com/wmlanglois/handoff/issues/13) | Delegated approval of an existing scope page. | Confirmed-intake-to-missing-scope generation connected to delegated dispatch; upfront explanation of remaining stops. |
-| [#21](https://github.com/wmlanglois/handoff/issues/21) | JSON contract import and Markdown brief-as-context. | Preserve a supplied Markdown backlog, compile dependency-closed batches, retain IDs and account for every item. Execution continuation belongs to #7, not a second scheduler. |
+| [#15/#16](https://github.com/wmlanglois/handoff/issues/16) | Correct registry envelope, project-local override, saved-worker rechecks. #17 is duplicate. | Registration is not role selection or workload qualification. |
+| [#12/#22](https://github.com/wmlanglois/handoff/issues/22) | Preflight and saved tools/chat-only policy through planning/repairs; service required only when used. | Trusted host execution, not a sandbox or quality guarantee. |
+| [#25/#28](https://github.com/wmlanglois/handoff/issues/28) | Real service workprobe, identity-keyed reusable readiness, request profiles/pins, runtime/dependency checks. | Full guided qualification, model revision/quantization identity, representative fail/revise and memory retrieval checks remain. Readiness is advisory unless strict mode selected. |
+| [#26](https://github.com/wmlanglois/handoff/issues/26), closed | Hash-checked carry content reaches chat-only repairs rather than an inaccessible path. | Essential input must fit; no silent truncation or server retuning. |
+| [#27](https://github.com/wmlanglois/handoff/issues/27), open | Finish/usage evidence, request-timeout classification, budget-aware waits, evidence-based ADJUST within ceilings/pins. | Complete taxonomy and equivalent external-runtime behavior remain. Missing provider usage is unknown. |
+| [#30](https://github.com/wmlanglois/handoff/issues/30), open | Guarded append/edit, ranged reads, crash-reconciled journals, final-byte receipts, durable conversation, active-context compaction, reference-aware scratch pruning. | Full accept/promote/cleanup lifecycle integration, external-runtime qualification and measured KV-cache behavior remain. Disk checkpoint is not server KV cache. |
+| [#31](https://github.com/wmlanglois/handoff/issues/31), open | LiteLLM config/gateway discovery and explicit qualified alias import with environment-referenced credentials. | Real gateway chat/tools interoperability remains; no server reconfiguration or automatic role choice. |
+| [#32](https://github.com/wmlanglois/handoff/issues/32), closed | Receipt-bound tools draft coaching, correct architect challenge evidence roots, no repo fallback. | External runtime coaching not implied. SQLite lifecycle rows are not a full transcript. |
 
-These open issues preserve the distinction between a missing software connection and a missing user plan. A user can supply a complete project design even when the harness cannot yet compile it. The solution need not generate every packet in a single model call: preserve the full backlog while executing bounded connected batches.
+## Latest narrow fixes and adjacent gaps
 
-## Liveness and operational boundaries
+| Issue | Current behavior |
+|---|---|
+| [#8](https://github.com/wmlanglois/handoff/issues/8) | Scope's own never-rule is not mistaken for a packet's requested action. |
+| [#14](https://github.com/wmlanglois/handoff/issues/14) | Existing liveness/timeouts; generated-token watchdog is transport-specific. Client timeout does not establish remote cancellation. |
+| [#18](https://github.com/wmlanglois/handoff/issues/18) | Static assertion analysis avoids the old regex false positive; not a behavioral quality certificate. |
+| [#33](https://github.com/wmlanglois/handoff/issues/33) | Bundled tools default thinking off; request profiles may override. Hidden reasoning remains evidence, not replayed working context. |
+| [#34](https://github.com/wmlanglois/handoff/issues/34) | Bookkeeping excluded from progress; unchanged artifacts/repeated failures do not count as new investigation. |
+| [#35](https://github.com/wmlanglois/handoff/issues/35) | Packet wall-clock budget derived rather than fixed at 1,800 seconds; timeout not mislabeled infrastructure unavailability. |
+| [#36/#37](https://github.com/wmlanglois/handoff/issues/37) | Chat/tools share 4,096-token default; bounded low/medium thinking cutoffs may be adjusted within policy. Output allowance is not context capacity. |
+| [#38](https://github.com/wmlanglois/handoff/issues/38) | Authorized absolute observation globs normalized; unsupported/path-escape cases do not crash the controller. |
+| [#39](https://github.com/wmlanglois/handoff/issues/39), open | Callback convention can still be absent from a contract. #42 delivers but does not infer it. |
+| [#40](https://github.com/wmlanglois/handoff/issues/40), open | Scheduler does not yet prefer lanes with applicable successful incremental-write readiness. |
+| [#41](https://github.com/wmlanglois/handoff/issues/41), closed narrow fix | Journey supports service readiness probe instead of crashing on persistent launch. Separate sensitivity gate still uses exit-based mutant checking; readiness alone is not promotion. Follow-up [#43](https://github.com/wmlanglois/handoff/issues/43) tracks the reproduced connection gap. |
+| [#42](https://github.com/wmlanglois/handoff/issues/42), closed | Worker brief carries binding provides/consumer verbatim. Public interfaces are not hidden oracle code. |
 
-[#14](https://github.com/wmlanglois/handoff/issues/14) remains closed with a coverage clarification. Existing mechanisms include request socket timeouts, the queue subprocess timeout, generation-based health checks, and authorized worker recovery. The added generated-token progress watchdog is on the prefill-lock streaming path, not every transport. No claim here establishes every end-to-end stall/retry scenario. Client timeout does not prove remote execution stopped.
+## Evidence and research boundaries
 
-The #22 patch makes unused-service handling explicit: chat-only plans report `not-needed` without probing the service, while lane/skeptic checks remain. Its bypass still skips all preflight. A configured endpoint, a green port check, or a copied sample does not establish working generation or correct role assignment. Tool policy is authorization, not capability proof or measured quality benefit. Offline regression checks exercise policy propagation, denial, service failure, and actual local tool self-check/write-receipt binding; no live model comparison is claimed.
+Local offline suite at this runtime baseline: **268 passed** before this reconciliation; four additional private characterization checks reproduced partial packaging, last-dependency-only inheritance, blocked-resume behavior and the service sensitivity gap. Characterization checks confirm limits, not fixes. Publication excludes private tests, fixtures, run logs, machine configuration and CI. This does not demonstrate every transport, OS or live overnight workflow.
 
-Local regression evidence is distinct from public CI and live deployment evidence. This publication intentionally excludes private tests, fixtures, run logs, machine configuration, and CI workflows. Issue closure is not itself test evidence.
+[#24](https://github.com/wmlanglois/handoff/issues/24) closed as an evaluation report, not a working-app milestone: reported chat met 2/4 criteria, tools 3/4, neither delivered the launched application. Different thinking settings confounded comparison. It supports tool-loop viability, not a general tools/thinking quality ranking.
 
-## Research preserved, not silently rewritten
+[Research](RESEARCH-automation-reporter-trap.md), [field scan](FIELD-SCAN-agentic-loops.md) and [prior art](PRIOR-ART.md) retain historical findings and citations. Add dated interpretation; do not rewrite observations as if current fixes were present then. External sources were not re-researched for this reconciliation.
 
-- [Reporter-trap research](RESEARCH-automation-reporter-trap.md): the hypothesis concerns real state-changing progress versus repeated reports. The current planning/continuation gaps above are engineering findings consistent with that concern, not proof of the hypothesis or measured benefit.
-- [Agentic-loop field scan](FIELD-SCAN-agentic-loops.md): a dated scan with explicit source-coverage gaps. Its role recommendations and model examples are historical research, not mandatory current configuration.
-- [Prior-art comparison](PRIOR-ART.md): the September 19 inventory compares code at that time. Statements that a component is unwired, or that a particular pattern is better, must not be read as a current release guarantee. Use this status page and current source for implementation state.
-
-This reconciliation does not re-verify every external paper, vendor claim, or repository in those research documents. Their citations and original text are retained. Research proposals such as richer memory retrieval, independent critique, and workflow improvements require their own measured evaluations; no blanket claim is made that they are implemented or improve outcomes.
-
-## Updating the record
-
-Operator-pinned `WORKER_OUTPUT_LIMITS` is shared by coding-worker chat and tool jobs.
-Tool-mode delivery feedback no longer asks for fences. The bundled tool loop keeps incomplete
-replies as unexecuted evidence, bounds length-stop recovery, and checks estimated context
-before generating.
-
-2026-09-25 (local commits, under #25/#28):
-- All run-state stores follow `FLEET_RUNS_DIR`, including the jobs/prefill-lock database.
-- Preflight names the tool runtime and refuses one that lacks required capabilities. It
-  probes the tool host's Python for the modules the plan's checks run.
-- Stop-reason evidence is recorded even when a tool loop stops by raising. The architect sees
-  it and can `ADJUST` an assignment's output limit within the lane ceiling, unless the limit
-  is pinned.
-- On a failed check, the skeptic's questions go into the next round.
-- Operators can set per-worker request profiles (thinking and sampling) in
-  `WORKER_REQUEST_PROFILES`.
-- The planner sees lane budgets, and plan review rejects outcomes too large for any lane.
-- `run/workprobe.py` probes a lane for code-fence, tool-call and sectioned-write compliance.
-- Operators can recover dispatched records from dead controllers (`queue.py recover-stale`).
-
-A live tools-mode trial on the bundled runtime recorded length-limited turns, and the architect
-issued evidence-based ADJUSTs. One adjusted packet was accepted. Another timed out on the fixed
-request wait, which led to the timeout scaling and classification below.
-
-2026-09-25, second batch (local commits; offline tests only unless stated):
-- #32 (another session): tools-mode drafts get the three-question coaching pass. Architect
-  challenges read the real tool workspace plus the stop evidence, with no silent repository fallback.
-- #27: request timeouts scale with the requested output. A worker timeout is a recorded round
-  failure (`request_timeout`), not an infrastructure crash, and ADJUST may lower a limit that
-  timed out.
-- #25/#30: workprobe tool probes execute on the tool service in a private workspace (a guarded
-  append must be accepted by the service). OVERSIZED applies to chat outcomes only.
-- #30: the tool loop sends a compacted view when the conversation would overflow the context,
-  and the checkpoint keeps the full history. `run/scratch.py` inventories and prunes tool
-  workspaces, reference-aware, as a dry run by default.
-- #25/#28: `run/readiness.py` saves per-lane readiness outside the repo with a configuration
-  identity. Preflight reports qualified/changed/failed/missing (advisory unless
-  `HANDOFF_REQUIRE_READINESS=1`).
-- #11: worker/skeptic roles are persisted in the registry (`registry.py roles`). `start` checks
-  that the roles answer a canary before intake/planning spends tokens.
-- #13: `autonomous --delegate` writes a missing scope from confirmed intake and prints what
-  delegation covers.
-- #6: seeded goal criteria reach the planner with their ids.
-- #7: `run/overnight.py` continues across dependent milestones in one authorized cumulative budget.
-- #21: `run/backlogc.py` compiles a Markdown backlog into dependency-closed batches and milestone
-  packages.
-- #9: `autonomous` and `overnight run` execute from a frozen harness snapshot.
-
-Not yet demonstrated live: the multi-milestone overnight path, a clean single-endpoint first use
-through dispatch, and delegated startup without scoped.md through dispatch.
-
-Additional local #30 work: guarded append/edit, ranged reads, per-workspace mutation serialization,
-request-identity checks and crash-reconciled file journals. Receipt resolution accepts validated
-incremental mutation receipts matching current artifact bytes; final full-file retransmission
-is unnecessary. Private tests exercise the real tool loop/service with scripted model replies,
-seal exact resulting bytes, reject tampering/stale edits and interrupt an append before receipt
-publication. Retention/cleanup and prompt compaction are not implemented by this patch.
-
-September 25 environment follow-up:
-
-- [Technical environment guide](ENVIRONMENT-REQUIREMENTS.md) is linked before first-use
-  commands. It documents current setup plus clearly marked qualification work still needed.
-- [Phase 2 environment proposal](PHASE-2-ENVIRONMENT.md) separates the chat/workbench layer
-  from backend inspection and opt-in tuning; it records headroom-calculator constraints.
-- #27 now has response-evidence preservation for chat streaming/nonstreaming and the
-  bundled tool loop. Provider usage remains unknown when omitted. Transport/budget failure
-  classification and architect routing remain open; this is not complete #27 coverage.
-- Private offline suite: 121 passing at this checkpoint, including nested carry staged and
-  read through the local tool service, with missing/tampered snapshots refused. No live
-  generation or server configuration changes were performed. Private tests are not published.
-
-When a fix ships, link the commit from its issue and state the exact behavior changed, the test boundary, and remaining scope. Keep successful narrow fixes credited. Reopen an issue for unmet acceptance criteria or create a clearly distinct follow-up; avoid duplicate continuation issues and avoid turning “implemented” into “live-validated.”
+Issue updates should name behavior, commit, test boundary and remaining acceptance criteria. Keep narrow fixes credited; link genuine follow-ups. Do not equate open validation issues with absent implementation, or helper tests with proven complete workflows.

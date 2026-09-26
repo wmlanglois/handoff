@@ -1,5 +1,7 @@
 # Research Notes on Automation: Breaking the Reporter Trap in Autonomous Local-LLM Loops
 
+> September 26 reconciliation: [change rationale](CHANGE-RATIONALE.md) maps these findings to shipped fixes, including backlog continuation, request parity, durable coding, evidence quality and interface delivery. [Current status](IMPLEMENTATION-STATUS.md) separates implementation from live validation. Historical observations below remain unchanged; no new external-source or controlled model comparison is claimed.
+
 > September 25 implementation note: these hypotheses and proposals are preserved, not presented as shipped features or demonstrated benefits. [Current implementation status](IMPLEMENTATION-STATUS.md) connects the findings to open planning, backlog, and continuation work. For execution, use the [README](../README.md), not historical prompt/configuration examples in this research note.
 
 *Working notes for the fleet harness. Status: research consolidation + design proposal. Nothing here is

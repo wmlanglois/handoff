@@ -40,7 +40,7 @@ This page is the callable surface. Each heading is an exact command a search can
 
 Nothing here is a claim that an unattended night succeeds. The [known limitations](../README.md#known-limitations) still apply.
 
-The [implementation status](IMPLEMENTATION-STATUS.md) separates shipped fixes from open connections and dated research proposals (source baseline: `221f434`, September 25, 2026).
+The [implementation status](IMPLEMENTATION-STATUS.md) separates shipped fixes from open connections and dated research proposals (source baseline: `0dc9256`, September 26, 2026).
 
 ## What a prolonged run is allowed to end on
 
@@ -50,7 +50,7 @@ These ends are deliberate:
 
 - Scope approval and assignment approval. `start` stops before either is skipped.
 - A never-rule from intake S4 or E4. The assignment is parked. It is not dispatched.
-- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. `C` runs until done or stuck; `D` is labeled overnight but currently uses the same review-pause behavior as C. Neither grants standing approval or starts later milestones. `autonomous --delegate` separately covers existing scope, plan, and derived-map approvals. Q0 does not cap autonomy. The letter is not a worker count.
+- Review cadence E3. `A` stops after one finished assignment. `B` stops after one batch. `C` runs until done or stuck; `D` is labeled overnight but currently uses the same review-pause behavior as C. Neither grants standing approval or starts later milestones. `autonomous --delegate` covers missing-scope generation from confirmed intake and scope/plan/map approvals; `overnight.py` separately authorizes and advances milestone packages. Q0 does not cap autonomy. The letter is not a worker count.
 - `--stagnation-k` on `verified.py`: consecutive rounds with no achievement and no new evidence.
 - `--investigation-budget` on `verified.py`: evidence keeps arriving and achievement never does.
 - An architect action, one of nine: `REPAIR`, `FOLLOWON`, `PARK`, `STOP`, `INVESTIGATE`, `REVISIT`, `PROPOSAL`, `QUESTION`, `CHALLENGE`.
@@ -90,7 +90,7 @@ Package files: `project.json`, `observed.md`, optional `brief.md` and `proposed.
 
 Existing packages with confirmed intake or already-recorded drafts continue without retroactive first-use choices. No new model call is inferred from that compatibility path.
 
-Goal criteria come from the confirmed S2 lines and, when a machine can check the work, from V2 and V3. The planner is handed only these intake criteria; a criterion added to the goal another way that no accepted outcome covers is recorded as an `UNPLANNED_CRITERION` with guidance (supply it via `plan --plan-file`, or run it as a separate goal), not dropped silently. A done-when outcome must set `integrator` to `handoff` and a `dest`. The integration group and frozen check are recorded before assignment approval. `approve` approves the plan; `approve-map` freezes the project baseline for autonomous mode.
+Goal criteria come from confirmed S2/V2/V3 or a batch package's `seed_criteria.json`, plus machine-checkable criteria already seeded on the goal. Original IDs reach the planner. Milestone, human-only and empty-text criteria are deliberately excluded from packet planning and reported. A done-when outcome must set `integrator` to `handoff` and a `dest`. `approve` approves the plan; `approve-map` freezes the project baseline for autonomous mode. Autonomous milestones use their assembled journey rather than a conflicting second packet-integration group.
 
 Related calls:
 
@@ -140,11 +140,11 @@ Packet-only mode dispatches the approved plan and stops; **packet completion is 
 
 `--decisions` and `--seconds` are required integers. `--workers` is a comma-separated list of worker names; when omitted the configured `PRIMARY_WORKER` is used (`cluster` if unset). `--plan-file` is a JSON object with an `outcomes` list of contracts; at the planning stage it supplies the proposal instead of calling the model. It is still gated, approved interactively or under delegation, and mapped through the same path. A rejected supplied plan is reported, not model-replaced; the flag does not replace an already-approved plan and does not compile a Markdown backlog. `--map` is a JSON file and is accepted only together with `--as`. The file is one object: `components` is a list of `{id, path, provides, calls?}`, and `milestone` is `{id, command}` where `command` is a list of strings, the first usually the Python executable and the last the launcher path. A person can skip `--map` and approve the derived map with `approve-map --from-proposed` instead.
 
-Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately, and sets autonomous mode with a durable budget. Without delegation, the ordinary path stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE`), then `AWAITING_MAP_APPROVAL`, then permits execution after approval. `--delegate NAME` records standing approval of an **existing** scope page, the proposed plan, and the derived map. It does not generate missing intake/scope or waive budgets, never-rules, or human-only sign-offs. Delegated resume also handles an already-proposed map: while no approved map exists, the map is derived from the current approved plan and an outdated proposal is replaced before approval. Failed derivation returns `MAP_DERIVATION_FAILED`, not dispatch. An already-approved stale map still fails the execution validity check. `--decisions 0` is a visible choice, never a hidden zero.
+Binds the entire approved `scoped.md` by path and exact-byte hash, records the launched-and-working milestone separately, and sets autonomous mode with a durable budget. Without delegation, the ordinary path stops at `AWAITING_PLAN_APPROVAL` (or `AWAITING_INTAKE`), then `AWAITING_MAP_APPROVAL`, then permits execution after approval. `--delegate NAME` generates a missing scope from confirmed intake and records delegated scope/plan/map approvals. It does not answer unconfirmed intake or waive budgets, never-rules, or human-only sign-offs. Delegated resume also handles an already-proposed map: while no approved map exists, the map is derived from the current approved plan and an outdated proposal is replaced before approval. Failed derivation returns `MAP_DERIVATION_FAILED`, not dispatch. An already-approved stale map still fails the execution validity check. `--decisions 0` is a visible choice, never a hidden zero.
 
-Before `run_goal`, default preflight canaries selected coding lanes and the named skeptic. When any assignment uses tools it also checks every selected coding lane's tool-call capability and requires the tool service. Otherwise the service is reported `not-needed` and not probed; worker and skeptic checks still run. A failure returns `PREFLIGHT_FAILED`. An explicitly empty `SKEPTIC_WORKER` produces a no-independent-review warning. `--skip-preflight` or any nonempty `HANDOFF_SKIP_PREFLIGHT` bypasses this entire check (even `0`); this is a diagnostic escape hatch, not readiness evidence. Preflight is not automatically run by `start` before intake/planning.
+Before `run_goal`, default preflight canaries selected coding lanes and the named skeptic. When any assignment uses tools it also checks every selected coding lane's tool-call capability and requires the tool service. Otherwise the service is reported `not-needed` and not probed; worker and skeptic checks still run. A failure returns `PREFLIGHT_FAILED`. An explicitly empty `SKEPTIC_WORKER` produces a no-independent-review warning. `--skip-preflight` or any nonempty `HANDOFF_SKIP_PREFLIGHT` bypasses this entire check (even `0`); this is a diagnostic escape hatch, not readiness evidence. Guided/brief `start` separately checks primary/skeptic role canaries before intake/planning; this is narrower than dispatch preflight and does not prove tool readiness. `--skip-connect-check` bypasses that startup check.
 
-This is one goal's connected execution loop, not a durable controller over an entire multi-milestone backlog. That remaining connection is [#7](https://github.com/wmlanglois/handoff/issues/7); Markdown import is [#21](https://github.com/wmlanglois/handoff/issues/21).
+This is one goal's connected loop. `overnight.py` supplies cross-milestone continuation and `backlogc.py` supplies structured Markdown batches. See [the operating guide](OVERNIGHT.md) for implemented behavior and remaining #7/#21 boundaries.
 
 The recorded time and decision budgets are cumulative across resume and restart. A repeated `autonomous` command does not reset them. A `BUDGET` stop reports what remains. Time is charged from a persisted active marker, including the gap after a crash, in whole seconds. A failed spend write stops the loop. Admitting a journey repair spends one decision. If the ledger also has `run_budget.repairs`, that ceiling stops new repairs on its own. There is no `autonomous` flag for the repair ceiling. An in-flight worker is left to finish.
 
@@ -174,7 +174,7 @@ Prints where the goal stands, including whether `complete()` is true.
 
 `python run/conductor.py fingerprint [--expect HASH]`
 
-Prints a hash of Python source under `run/`. Capture it before a live or evaluation run and pass it back to this command with `--expect`; it exits non-zero on a mismatch. It does not cover root runtime modules or automatically run at dispatch, and is not an execution lock. Give concurrent sessions separate checkouts and do not edit a live runtime; enforced stability is still #9.
+Prints a hash of Python source under `run/`; `--expect` exits nonzero on mismatch. This manual diagnostic is narrower than the separate source snapshot used automatically by CLI autonomous/overnight (#9). Neither is a lock on external settings, services or remote models. Keep one controller for a run and do not mutate its external environment during evaluation.
 
 `python run/conductor.py memory <action> [flags]`
 
@@ -305,7 +305,7 @@ Library entry is `repair_loop`. Bare execution prints help. `--demo` shows oscil
 
 `python run/registry.py connect [--url URL ...] [--no-register] [--no-recheck]`
 
-Separate setup helper: discover common local server ports, qualify/register new endpoints, and re-canary saved workers. `--url` is repeatable and replaces the default discovery list. `--no-register` suppresses new registrations, but saved workers are still rechecked unless `--no-recheck` is also set. A new qualification or successful saved-worker check establishes endpoint readiness; saved entries alone do not. Unchecked saved entries are reported as unverified. Discovery alone does not qualify a model or select primary/skeptic roles. Role settings remain explicit in `fleet_settings.local.py`; `start` does not yet perform this setup for you.
+Separate setup helper: discover common local server ports, qualify/register new endpoints, and re-canary saved workers. `--url` is repeatable and replaces the default discovery list. `--no-register` suppresses new registrations, but saved workers are still rechecked unless `--no-recheck` is also set. A new qualification or successful saved-worker check establishes endpoint readiness; saved entries alone do not. Unchecked saved entries are reported as unverified. Discovery alone does not qualify a model or select primary/skeptic roles. `registry.py roles --primary NAME --skeptic NAME` saves explicit roles in the registry; `--no-skeptic` records opt-out. Calling `roles` without flags shows saved/effective roles. Settings-file roles override registry roles. Guided/brief `start` checks role canaries and prints discovery/setup instructions if roles are missing; it does not silently register or select them.
 
 Set `FLEET_REGISTRY` before these commands for project-local storage. Otherwise the per-user registry is shared across clones. The committed `workers.example.json` uses `version: 1` and a `workers` object; its non-reserved placeholder names must match the selected roles. Validate configured models before dispatch; a copied sample is not qualification evidence.
 
@@ -396,12 +396,12 @@ Private project data, generated runs, domain-specific corpora and adapters, and 
 `WORKER_OUTPUT_LIMITS` in the private settings file maps worker names to positive integer
 output-token allowances, shared by coding-worker chat and tool jobs. For example,
 `WORKER_OUTPUT_LIMITS = {"my-worker": 4096}`. Values are operator-pinned; omitted workers
-retain the existing defaults. Architect auto-adjustment is not implemented. This is not a
+use the shared 4,096-token default unless another explicit policy applies. Architect ADJUST can change an unpinned allowance within the lane ceiling using recorded cutoff/timeout evidence; bounded low/medium thinking is eligible, unbounded thinking exhaustion is not. This is not a
 server context or sampling setting. Select values that leave input/context headroom.
 
 The bundled tool runtime checks estimated input (including tools and arguments), output
 allowance and a 512-token reserve before generation. It preserves the checkpoint rather
-than silently trimming tool history. Estimates are not backend token counts. A length stop
+than discarding durable tool history. When needed, the active request replaces older file-write/read bodies with path/hash/size references, retaining task and recent messages and tool grouping; the full history stays in the checkpoint. It fails closed if the reduced request still cannot fit. Estimates are not backend token counts. A length stop
 saves the returned fragment as unexecuted diagnostic evidence and permits one corrective
 continuation; a second length stop halts that attempt, including on resume. Content-filter
 stops are distinct and are not automatically retried within that attempt. Outer attempt
@@ -421,7 +421,7 @@ Reusing an ID with different arguments is rejected. Old cached receipts lacking 
 require explicit reconciliation rather than guessed replay. Service receipt files are excluded
 from file listings and direct file-tool access; `python_run` is still trusted host execution,
 not a hostile-code sandbox. External services must advertise incremental actions before use.
-Reference-aware scratch cleanup and active-context compaction remain #30 work.
+Reference-aware scratch inventory/pruning and active-context compaction are implemented. Full lifecycle integration and external-runtime behavior remain #30 work.
 
 Diagnostic support (#27): chat telemetry includes `generation` with the actual requested
 output limit, provider finish reason and usage when supplied. Chat worker logs record it;
@@ -430,12 +430,68 @@ Null counts mean unavailable, not zero. Input-token estimates and configured con
 labeled separately. This does not yet provide the complete structured failure/architect
 routing required by #27, and does not change sampling, model-server settings or acceptance.
 
-## Not built yet
+## Remaining work
 
-These are directions, not commands.
+Implemented-but-not-live-validated differs from missing functionality; see [current status](IMPLEMENTATION-STATUS.md).
 
-- Complete guided connection/role setup ([#11](https://github.com/wmlanglois/handoff/issues/11)) and delegated generation of a missing scope from confirmed intake ([#13](https://github.com/wmlanglois/handoff/issues/13)).
-- Planning all authorized seeded criteria ([#6](https://github.com/wmlanglois/handoff/issues/6)), Markdown-backlog compilation ([#21](https://github.com/wmlanglois/handoff/issues/21)), and durable delegated cross-milestone continuation ([#7](https://github.com/wmlanglois/handoff/issues/7)).
-- Enforced stable execution code across controller/subprocesses ([#9](https://github.com/wmlanglois/handoff/issues/9)); the fingerprint command is a manual diagnostic over `run/`, not a lock or complete runtime identity.
+- Live first-use role setup through dispatch (#11) and delegated missing-scope through dispatch (#13); both connections have offline coverage.
+- Live structured-backlog batch execution (#21) and cross-milestone run (#7), plus compiler/continuation boundaries in [OVERNIGHT](OVERNIGHT.md). Seeded planning (#6) is implemented and closed.
+- External settings/service stability is not supplied by the implemented CLI runtime snapshot (#9). The fingerprint command remains a narrower manual diagnostic.
 
 - Never-rules do not sandbox the process. They refuse acceptance when the emitted source text matches the rule. A worker can still be stopped only after that text exists.
+
+## Backlog, overnight and environment commands
+
+These are executable commands, not future proposals. Read [OVERNIGHT](OVERNIGHT.md) for input examples, authority, partial-compilation and dependency-baseline limitations.
+
+### `python run/backlogc.py`
+
+- `compile <backlog.md> [--max-items N] [--out DIR]`: parse structured item headings, dependencies, deliverables and acceptance; write batches/status JSON. Default six items per batch. Nonzero exit when unparsed/not-compiled entries remain.
+- `packages <backlog.md> --parent-package DIR --out DIR`: confirmed parent intake plus source items become milestone packages and an overnight backlog. Currently recompiles at the default six-item size and does not fail closed on every partial compilation; resolve source problems before using it.
+- `status <backlog.md> [--overnight STATE_FILE] [--out DIR]`: show item counts; with an overnight state file, update completed item statuses. It is then a state write, not just inspection.
+
+### `python run/overnight.py`
+
+- `authorize <backlog.json> --as NAME --decisions N --seconds N`: record exact backlog hash, explicit delegated authority and cumulative budget.
+- `run <backlog.json> --workers NAMES [--tool-mode tools|chat-only]`: advance eligible milestone packages through ordinary autonomous mode; workers comma-separated. One controller, not a second worker scheduler.
+- `status <backlog.json>`: print consolidated state/budget report.
+
+Backlog format: `{"milestones":[{"id":"m1","package":"pkg1"},{"id":"m2","package":"pkg2","after":["m1"]}]}`. Relative packages resolve beside the backlog. State/report are adjacent `.state.json`/`.report.md` files. Only the last dependency supplies a copied baseline; no parallel-checkpoint merge. Blocked milestones are not automatically reactivated. Source snapshotting occurs on CLI run; external settings/services stay external.
+
+### `python run/workprobe.py <worker>`
+
+Makes real generation/tool calls: format extraction, actual service write, and guarded incremental writes. Requires authorization and tool service; not a read-only health check. Saves evidence under runs and readiness beside registry.
+
+### `python run/readiness.py`
+
+`show [worker ...]` reports qualified/changed/failed/missing under current identity.
+`forget <worker>` invalidates that environment's saved qualification; it does not delete the worker registration.
+Readiness is not liveness or authorization. #40 tracks scheduling that acts on qualifications.
+
+### `python run/scratch.py`
+
+Inventory tool workspaces, dry-run by default. `--root DIR` selects service jobs; `--retention-days N` defaults to 7; `--quota-mb N` warns, not forcibly evicts; `--apply` deletes eligible candidates after reference checks. Running/parked/accepted/referenced or unknown work is retained conservatively. This is not a garbage collector for every log or snapshot.
+
+### Additional environment and settings controls
+
+| Name | Meaning |
+|---|---|
+| `HANDOFF_ENVIRONMENT` | Readiness namespace; default `default`. |
+| `HANDOFF_READINESS_FILE` | Override readiness file; default beside registry. |
+| `HANDOFF_REQUIRE_READINESS` | Any nonempty value enforces qualification in preflight (even `0`); unset is advisory. |
+| `HANDOFF_NO_SNAPSHOT` | Any nonempty value bypasses CLI source isolation; development only. |
+| `HANDOFF_SNAPSHOT`, `HANDOFF_SOURCE_ROOT` | Set by snapshot relaunch; do not forge them to bypass isolation. |
+| `HANDOFF_ALLOW_MISSING_TOOL_DEPS` | Explicit preflight override for missing tool-host dependencies; not installation or qualification. |
+| `HANDOFF_ALLOW_DEGRADED_TOOL_RUNTIME` | Explicit acceptance of missing runtime capabilities; does not implement them. |
+| `WORKER_REQUEST_PROFILES` | Private per-worker sampling/thinking profile; see generation.py validation. |
+| `PACKET_MAX_SECONDS` | Private queue wall-clock ceiling, default 7200; not total project budget. |
+
+Request profile keys are validated by `generation.py`: `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `repeat_penalty`, `think`, `reasoning_effort`, `thinking_budget`. Sampling overrides can use `None` to omit that request key, leaving the server to choose. Thinking controls are dialect-dependent. Defaults remain temperature 0.6 for chat and 0.2 for bundled tools unless overridden; they are harness request defaults, not measurements of the user's server configuration. Canary generation uses its own bounded policy rather than the worker profile, so a canary pass does not validate every profile setting.
+
+`python run/queue.py recover-stale [--older-than SECONDS]` uses the queue's recovery path for stale dispatch markers; inspect live ownership first. It is not permission to clear an active worker. `TOOL_HOST_REQUIRED_MODULES` adds tool-host Python import requirements. `FLEET_JOBS_DB` overrides the jobs/locks SQLite path; otherwise it follows `FLEET_RUNS_DIR`. Do not move an active database to reconcile two checkouts.
+
+### Service journeys and interface delivery
+
+Launcher `probe` is carried into the derived map's milestone: `{"url":"http://127.0.0.1:8765/health","expect":200,"contains":"healthy"}`. Journey checks readiness rather than requiring a server to exit; no probe means a persistent launch is unverified. The separate sensitivity gate remains exit-based, so readiness is not a complete service-promotion guarantee (#41 follow-up). Use an explicitly local unused port and bounded behavioral checks.
+
+Worker briefs now carry exact `provides` and `consumer` requirements (#42). These public interfaces must be visible even when oracle implementation is hidden. Callback argument/return conventions must also be specified; plan-time enforcement remains #39.

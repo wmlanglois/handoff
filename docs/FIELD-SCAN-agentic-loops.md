@@ -1,5 +1,7 @@
 # Field scan: what agentic loops actually do, September 2026
 
+> September 26 follow-through: [change rationale](CHANGE-RATIONALE.md) connects this scan to current Handoff changes; [implementation status](IMPLEMENTATION-STATUS.md) replaces historical wired/unwired descriptions for operational decisions. The original evidence, sources and coverage limitations below are preserved. This update is a code/issue reconciliation, not a fresh external literature review.
+
 > September 25 implementation note: the source coverage and recommendations below are a dated research snapshot, not current Handoff operating instructions. See [implementation status](IMPLEMENTATION-STATUS.md) for shipped features and remaining connections. This reconciliation preserves the original citations and does not claim to have refreshed every external source.
 
 Source: four scraping lanes over vendor docs, agent source code, and two community bug threads.

@@ -485,6 +485,29 @@ https://vensas.de/en/blog/karpathy-three-layers and https://guides.kno2gether.co
 [16] Karpathy, A. *Software 3.0* keynote, Y Combinator AI Startup School, June 2025: the autonomy
 slider, partial autonomy, "keep it on the leash." https://www.latent.space/p/s3
 
+[17] Mukta, L. (Anthropic applied AI). *The evolution of AI agent memory from 1 session to
+persistent.* AI DevCon talk, 2026. https://www.youtube.com/watch?v=O5DKmCspw5M -- memory modelled as a
+searchable file system; versioning, hash-checked concurrent edits, permission tiers, portability; the
+limits of in-session ("in-band") memory; out-of-band batch review of transcripts and tool metadata
+("dreaming") that proposes memory changes with evidence for human approval.
+
+[18] Qwen team. *Qwen3: Think Deeper, Act Faster.* https://qwenlm.github.io/blog/qwen3/ -- hybrid
+thinking / non-thinking modes in one model and a controllable thinking budget.
+
+[19] Unsloth. *Qwen3.8 -- How to Run Locally.* https://unsloth.ai/docs/models/qwen3.8 -- reasoning-effort
+levels exposed by the chat template (default the highest), separate recommended sampling per mode,
+and a preserve-thinking option that keeps prior reasoning in history at extra token cost.
+
+[20] Community reports on Qwen3.8-27B reasoning length.
+https://huggingface.co/Qwen/Qwen3.8-27B/discussions/113 and
+https://huggingface.co/Qwen/Qwen3.8-27B/discussions/97 -- extended thinking on simple requests at the
+default level; lower effort or disabled thinking reported faster; one report questions whether the
+disable switch holds on every build. Anecdotal, not measured.
+
+[21] llama.cpp discussion on per-request reasoning budgets.
+https://github.com/ggml-org/llama.cpp/discussions/21445 -- the server can cap reasoning with a budget
+and an injected end-of-thinking message; per-request control is discussed separately.
+
 
 ## 9. Measured comparison: does the decision step earn its cost?
 
@@ -540,3 +563,92 @@ Every defect that mattered across this project was found by running the system, 
 and the most expensive one was a check that knew the answer and would not say it. Before adding a
 reasoning layer to recover from failures, make the failures legible. That is cheaper, and here it
 was sufficient.
+
+## 10. Context, memory and hidden reasoning: the first tool-enabled runs
+
+Observed 2026-09-25 across several tool-enabled trials on local hybrid-reasoning models, compared
+with an earlier chat-only run of the same plan. Stated generally; this section describes the
+failure mechanisms, not any machine or fleet, and the defects it names are tracked as issues.
+
+### 10.1 What the field says
+
+The memory and context literature has converged on a few points [17]. A short instructions file at
+session start is unreasonably effective until it grows. Detail belongs behind progressive
+disclosure: a short header in context, the body loaded on demand. Memory works well as plain
+markdown that agents search with ordinary file tools. At scale it needs harness-owned guardrails:
+versioning with provenance, a hash check before committing an edit, read-only shared memory versus
+writable scratch, and portability. Two structural limits remain for memory curated inside a
+session. The agent splits effort between the task and future runs, and it sees only its own
+session, so patterns across sessions or across a fleet are invisible to it. The proposed answer is
+an out-of-band review pass with its own budget ("dreaming"). It reads a window of transcripts,
+including tool calls and metadata, and proposes memory changes with example transcripts and
+prevalence counts for a human to accept or reject.
+
+Hybrid-reasoning open models add a second axis. The same model thinks or not depending on a
+per-request control, the default is often the most expensive level, and the thinking is not visible
+content [18][19][20]. Community reports describe long reasoning on simple requests and faster
+responses at lower effort, but offer no measurement for tool-using code work [20]. A hard cap exists
+at the server level [21].
+
+### 10.2 What we observed
+
+1. **Hidden reasoning masqueraded as truncation.** One request path turned thinking off; the tool
+   loop sent no control, so it inherited the server default and thought. The recorded symptom was
+   "stopped at the output limit". The planning layer raised output limits several times on that
+   evidence, and each raise bought more reasoning rather than more code. Only reading the saved
+   conversations showed cut-off replies consisting almost entirely of reasoning, and a completed
+   reply with no visible content at all. A tiny direct check confirmed the disable switch worked on
+   the lane; the fault was a request path that never sent it.
+2. **Re-sent reasoning consumed the window.** Prior turns' reasoning stayed in the history sent back
+   to the model. Conversations grew until attempts ended on the context guard after a single turn.
+3. **Bookkeeping was scored as investigation.** The progress measure counted any new workspace file
+   as evidence, and the tool service writes a receipt for every call. A packet therefore ran to its
+   round cap with the artifact unchanged and the same assertion failing every round, each round
+   labelled "investigation". This is the reporter trap of section 1 in a new form: motion measured
+   where progress should be.
+4. **A harness wait was recorded as a broken lane.** A whole-packet wall clock killed a run before it
+   wrote its result, and the record fell back to "worker unavailable". Later decisions reasoned about
+   infrastructure that had not failed.
+5. **The tool environment itself worked.** Every accepted packet came from a genuine multi-turn loop:
+   write, run a check, make a small edit, check again; or a sectioned write followed by a check. The
+   failures starved that loop; they did not show it absent.
+6. **Retained memory fed over-planning.** A stored correction reached the worker, which then drafted
+   a whole module in its reasoning before inspecting a single file.
+7. **Cross-run reading found everything that mattered.** None of the above was visible in a single
+   packet's receipt. Each was found by reading across runs: stop reasons, tool calls, checkpoints.
+   That is the out-of-band review of [17], done by hand, late.
+
+### 10.3 What is established, and what is not
+
+- **Established:** a request path without an explicit thinking control silently changes worker
+  behaviour on hybrid models, and "length-limited" is ambiguous evidence until reasoning size is
+  recorded. Counting side-effect files as evidence defeats a stagnation detector. A timeout that
+  falls back to an infrastructure label misdirects the planning layer.
+- **Not established:** whether tool-using coding works better with thinking off, at a low effort
+  level, or at the default. The comparison against the chat-only run is confounded, because that run
+  had thinking off and the tool runs did not. The honest reading is that tools mode is viable and
+  was badly handicapped, not that tools help. A matched A/B on the same packets is the next
+  measurement.
+- **Not established:** that an automated cross-run reviewer finds these faults as reliably as a
+  person reading checkpoints. It is proposed below, not demonstrated.
+
+### 10.4 The transferable lesson
+
+Section 9 concluded that failures must be made legible before a reasoning layer is added to recover
+from them. This round adds the other half: **the evidence a loop reasons on must measure what it
+claims to.** An output-limit stop that is really reasoning, a "new evidence" count that is really
+receipts, and an "unavailable worker" that is really a timeout each looked like data and each sent
+the next decision the wrong way. The fixes were small and deterministic: send the setting on every
+path, record reasoning size, exclude bookkeeping, and give timeouts their own outcome. This is the
+harness-versus-agent boundary of [17]: once a primitive's behaviour is understood, it belongs in
+code, not in the model's judgement.
+
+Two design consequences follow, both proposals:
+
+- **An advisory out-of-band reviewer** that reads generation evidence, tool calls and checkpoints
+  across runs after each drain. It would propose findings with example runs and counts, such as
+  reasoning-heavy cut-offs, repeated identical failures, or one lane's recurring timeouts, for the
+  architect or a person to approve before they become lessons.
+- **Retained lessons treated as memory in the sense of [17]:** versioned with their source run,
+  scoped (project-wide versus per-packet), checked for staleness, and offered to workers as short
+  headers whose bodies are read on demand rather than injected up front.

@@ -497,9 +497,39 @@ def ssh_cmd(host=None, connect_timeout=10):
             "-i", SSH_KEY, target]
 
 
-# The Mac cluster is the primary reasoning/coding node; the CUDA pairs are strong parallel lanes.
-DEFAULT_WORKER = setting("PRIMARY_WORKER", "cluster")
-SKEPTIC_WORKER = setting("SKEPTIC_WORKER", "spark")
+def registry_roles(path=None):
+    """{"primary": name, "skeptic": name-or-""} saved in the worker registry by `registry.py roles`
+    (#11). An empty skeptic is an explicit no-review choice; an absent key is no choice. Never raises."""
+    try:
+        doc = json.loads(Path(path or registry_path()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    roles = doc.get("roles") if isinstance(doc, dict) else None
+    if not isinstance(roles, dict):
+        return {}
+    return {k: v for k, v in roles.items() if k in ("primary", "skeptic") and isinstance(v, str)}
+
+
+def role_sources():
+    """Where each role's worker name came from: settings, registry or default."""
+    roles = registry_roles()
+    out = {}
+    for role, key in (("primary", "PRIMARY_WORKER"), ("skeptic", "SKEPTIC_WORKER")):
+        if setting(key, _REQUIRED_UNSET) is not _REQUIRED_UNSET:
+            out[role] = "settings"
+        elif role in roles:
+            out[role] = "registry"
+        else:
+            out[role] = "default"
+    return out
+
+
+_REQUIRED_UNSET = object()
+_ROLES = registry_roles()
+# Precedence: the settings file, then roles saved in the registry, then this fleet's historical
+# defaults (the Mac cluster as primary, spark as skeptic) -- a clean install sets its own roles.
+DEFAULT_WORKER = setting("PRIMARY_WORKER", _ROLES.get("primary") or "cluster")
+SKEPTIC_WORKER = setting("SKEPTIC_WORKER", _ROLES["skeptic"] if "skeptic" in _ROLES else "spark")
 # A clean installation can use one registered endpoint for both roles. The historical pairA lane
 # is capacity, not a requirement for a different user's fleet.
 REQUIRED = tuple(dict.fromkeys((DEFAULT_WORKER, SKEPTIC_WORKER)))

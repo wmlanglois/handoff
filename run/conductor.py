@@ -1211,7 +1211,54 @@ def _cmd_start(a):
         print("deferred. No model was called; scope, plan, map, and workers were not started.")
         print("resume with the same start command and --intake-mode guided or brief")
         raise SystemExit(2)
+    if not getattr(a, "skip_connect_check", False) and not first_use_workers():
+        print("stopped before intake/planning: no tokens were spent. Re-run the same start command "
+              "once the workers above answer.")
+        raise SystemExit(2)
     return _resume(package, allow_draft=a.draft)
+
+
+def first_use_workers(*, probe=None, discover=None, echo=print):
+    """Before a first-use start spends tokens on intake or planning (#11): the primary worker and
+    skeptic roles must resolve to configured workers that answer a live canary. Returns True when
+    ready. Otherwise prints what is missing and exactly what to run, and returns False. Nothing is
+    registered or changed here; discovery only reports what answers."""
+    import fleet
+    src = fleet.role_sources()
+    primary, skeptic = fleet.DEFAULT_WORKER, fleet.SKEPTIC_WORKER
+    echo("workers: primary {0} [{1}], skeptic {2} [{3}]".format(
+        primary, src["primary"], skeptic or "(none: no independent review)", src["skeptic"]))
+    missing = [r for r, n in (("primary", primary), ("skeptic", skeptic)) if n and n not in fleet.WORKERS]
+    if missing:
+        echo("not connected: {0} {1} not a configured or registered worker.".format(
+            " and ".join("{0} {1!r}".format(r, primary if r == "primary" else skeptic) for r in missing),
+            "is" if len(missing) == 1 else "are"))
+        import registry
+        rep = (discover or (lambda: registry.connect(register_found=False, recheck=False)))()
+        for f in rep.get("found") or []:
+            echo("  found a model server at {0} ({1})".format(f["url"], ", ".join(f.get("models") or [])[:80]))
+        if rep.get("found"):
+            echo("register it and choose roles (one endpoint can do both):")
+            echo("  python run/registry.py add {0} --name <name>".format(rep["found"][0]["url"]))
+            echo("  python run/registry.py roles --primary <name> --skeptic <name>   (or --no-skeptic)")
+        else:
+            echo("no local model server answered. Start one, then register it:")
+            echo("  LM Studio: Developer tab, Start Server (http://localhost:1234)")
+            echo("  llama.cpp: llama-server -m your-model.gguf --port 8080")
+            echo("  Ollama:    ollama serve (http://localhost:11434)")
+            echo("  then: python run/registry.py connect  and  python run/registry.py roles --primary <name>")
+        return False
+    import preflight
+    names = [primary] + ([skeptic] if skeptic and skeptic != primary else [])
+    rows = []
+    for n in names:
+        rows.append((probe or (lambda nm: preflight.probe_worker(nm, fleet.WORKERS[nm], 25, lambda *a, **k: None)))(n))
+    bad = [r for r in rows if r.get("verdict") != "ok"]
+    for r in bad:
+        echo("worker {0} did not answer a live canary ({1}); fix the server or choose another role:".format(
+            r.get("worker"), r.get("verdict")))
+        echo("  python run/registry.py health {0}".format(r.get("worker")))
+    return not bad
 
 
 def _cmd_continue(a):
@@ -1936,6 +1983,8 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("start", help="first-use entry: record a folder and resume the project package")
+    p.add_argument("--skip-connect-check", action="store_true",
+                   help="do not verify the primary/skeptic workers answer before intake (not recommended)")
     p.add_argument("folder", help="the project folder to observe and bind as project_root")
     p.add_argument("--name", required=True, help="project name; one path segment")
     p.add_argument("--package", default=None,

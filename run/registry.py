@@ -426,8 +426,11 @@ def _write_doc(path, workers):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
-    tmp.write_text(json.dumps({"version": fleet.REGISTRY_VERSION, "workers": workers}, indent=2),
-                   encoding="utf-8")
+    doc = {"version": fleet.REGISTRY_VERSION, "workers": workers}
+    roles = fleet.registry_roles(path)          # role choices survive every registration write (#11)
+    if roles:
+        doc["roles"] = roles
+    tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -440,6 +443,34 @@ def _reload_if_live(path):
     """
     if Path(path) == Path(fleet.registry_path()):
         fleet.reload_workers()
+
+
+def set_roles(primary=None, skeptic=None, *, path=None):
+    """Persist the primary-worker and skeptic roles in the registry (#11). `skeptic=""` records a
+    deliberate no-review choice. Names must be registered or configured workers. Returns the roles."""
+    path = Path(path or fleet.registry_path())
+    known = set(fleet.WORKERS) | set(entries(path))
+    for role, name in (("primary", primary), ("skeptic", skeptic)):
+        if name and name not in known:
+            raise ValueError("{0} {1!r} is not a registered or configured worker; known: {2}".format(
+                role, name, ", ".join(sorted(known)) or "none"))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raw = {"version": fleet.REGISTRY_VERSION, "workers": {}}
+    roles = dict(raw.get("roles") or {})
+    if primary is not None:
+        roles["primary"] = primary
+    if skeptic is not None:
+        roles["skeptic"] = skeptic
+    raw["roles"] = roles
+    raw.setdefault("version", fleet.REGISTRY_VERSION)
+    raw.setdefault("workers", {})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
+    tmp.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    return roles
 
 
 def entries(path=None):
@@ -656,6 +687,12 @@ def main(argv=None):
                    help="serialize prefills (a second mlx-lm tensor-parallel cluster needs this)")
     a.add_argument("--reasoning-style", choices=("none", "template_kwargs", "budget_field"))
 
+    ro = sub.add_parser("roles", help="show or set the primary-worker and skeptic roles")
+    ro.add_argument("--primary", help="worker that does the coding work")
+    ro.add_argument("--skeptic", help="worker that reviews drafts (may be the same as --primary)")
+    ro.add_argument("--no-skeptic", action="store_true",
+                    help="record a deliberate choice to run without independent review")
+
     sub.add_parser("list", help="show every worker, with provenance and last known health")
     h = sub.add_parser("health", help="probe a worker now (end-to-end generation canary)")
     h.add_argument("name")
@@ -725,6 +762,27 @@ def main(argv=None):
         for w in rec.get("warnings") or []:
             print(f"  WARNING: {w}")
         print(f"  stored in {fleet.registry_path()}")
+        return 0
+
+    if args.cmd == "roles":
+        if args.primary or args.skeptic or args.no_skeptic:
+            if args.skeptic and args.no_skeptic:
+                print("choose --skeptic NAME or --no-skeptic, not both")
+                return 2
+            try:
+                set_roles(args.primary, "" if args.no_skeptic else args.skeptic)
+            except ValueError as e:
+                print(str(e))
+                return 1
+        roles = fleet.registry_roles()
+        src = fleet.role_sources()
+        print("saved roles: primary={0} skeptic={1}  (in {2})".format(
+            roles.get("primary", "-"), repr(roles["skeptic"]) if "skeptic" in roles else "-", fleet.registry_path()))
+        print("in effect:   primary={0} [{1}]  skeptic={2} [{3}]".format(
+            fleet.DEFAULT_WORKER, src["primary"], fleet.SKEPTIC_WORKER or "(none: no independent review)",
+            src["skeptic"]))
+        if src["primary"] == "settings" or src["skeptic"] == "settings":
+            print("  note: a role set in the settings file overrides the registry choice.")
         return 0
 
     if args.cmd == "check":

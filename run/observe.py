@@ -15,6 +15,7 @@ The probe vocabulary is closed on purpose. Granting `python_run` or the browser 
 curiosity the handoff rules out.
 """
 import re
+import pathlib
 from pathlib import Path
 
 PROBES = ("list", "read", "grep")
@@ -39,6 +40,37 @@ def _safe(root, rel):
     if not _inside(root, p):
         raise PermissionError("target {0!r} is outside the authorized root".format(rel))
     return p
+
+
+def _relative_pattern(root, pat):
+    """A glob pattern relative to `root` (2026-09-26, observed live). The architect's INVESTIGATE
+    passed an ABSOLUTE path; Path.glob() on Python 3.14 raises NotImplementedError for non-relative
+    patterns, which escaped observe() and crashed the whole controller. An absolute pattern inside
+    the root is made relative; one outside it is refused like any other read outside the root."""
+    raw = str(pat or "").strip().strip('"')
+    if ".." in raw.replace("\\", "/").split("/"):
+        raise PermissionError("glob may not climb out of the root")
+    if ".." in raw:
+        raise PermissionError("glob may not climb out of the root")
+    p = pathlib.PurePath(raw)
+    if p.is_absolute() or p.drive or raw.startswith(("/", "\\")):
+        anchor = []
+        for part in p.parts:
+            if any(ch in part for ch in "*?["):
+                break
+            anchor.append(part)
+        fixed = Path(*anchor) if anchor else Path(p.anchor or "/")
+        try:
+            fixed_res = fixed.resolve()
+        except (OSError, RuntimeError):
+            raise PermissionError("target {0!r} is outside the authorized root".format(raw))
+        if not _inside(root, fixed_res):
+            raise PermissionError("target {0!r} is outside the authorized root".format(raw))
+        rest = p.parts[len(anchor):]
+        rel = fixed_res.relative_to(root).as_posix()
+        pattern = "/".join(([rel] if rel not in ("", ".") else []) + list(rest))
+        return pattern or "*"
+    return raw.replace("\\", "/").lstrip("/") or "*"
 
 
 def _candidates(root, paths, out):
@@ -115,8 +147,7 @@ def observe(root, probe):
             pat = target or "*"
             if pat.strip() in (".", "./", ""):        # "list the root" -- glob(".") is not a valid pattern
                 pat = "*"
-            if ".." in pat:
-                raise PermissionError("glob may not climb out of the root")
+            pat = _relative_pattern(base, pat)
             files = sorted(str(x.relative_to(base)).replace("\\", "/")
                            for x in _candidates(base, base.glob(pat), out) if x.is_file())
             text = "\n".join(files)[:MAX_CHARS] or "(none)"
@@ -128,9 +159,7 @@ def observe(root, probe):
         if tool == "grep" and any(ch in target for ch in "*?["):
             # The first live INVESTIGATE asked to grep "**/*.py"; a glob is a natural target for
             # a grep and refusing it cost the run its one useful probe. Stay inside the root.
-            if ".." in target:
-                raise PermissionError("glob may not climb out of the root")
-            files = [f for f in _candidates(base, base.glob(target), out) if f.is_file()
+            files = [f for f in _candidates(base, base.glob(_relative_pattern(base, target)), out) if f.is_file()
                      and f.suffix.lower() in TEXT_SUFFIXES]
             return _grep(base, files, (probe or {}).get("pattern"), out, ref=str(base))
         p = _safe(base, target or ".")
@@ -164,7 +193,7 @@ def observe(root, probe):
     except PermissionError as e:
         out["reason"] = str(e)
         return out
-    except ValueError as e:
+    except (ValueError, NotImplementedError) as e:
         # a malformed glob/pattern (e.g. target ".") is a malformed INVOCATION, not an answer:
         # record it so the architect can correct the probe, never crash the run (O4 4B).
         out["reason"] = "malformed probe target {0!r}: {1}".format(target, e)

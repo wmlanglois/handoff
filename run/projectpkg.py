@@ -289,6 +289,20 @@ def approve_scope(package: Path, by: str, note: str = "") -> dict:
     return doc
 
 
+def seed_criteria(package: Path):
+    """Criteria a compiled backlog batch supplies for this package (#21), or None. When present they
+    REPLACE the intake done-when lines as the package's planned criteria, ids preserved (the item ids)."""
+    p = Path(package) / "seed_criteria.json"
+    if not p.is_file():
+        return None
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    crit = doc.get("criteria") if isinstance(doc, dict) else None
+    if not isinstance(crit, list) or not crit or not all(isinstance(c, dict) and c.get("id") and
+                                                         (c.get("text") or "").strip() for c in crit):
+        raise SystemExit("seed_criteria.json in {0} must list criteria with an id and text".format(package))
+    return [{"id": c["id"], "text": c["text"].strip()} for c in crit]
+
+
 def criteria_from_intake(st) -> list:
     """The user's done-when lines, plus the pass and fail examples when a machine can check them.
 

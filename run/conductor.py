@@ -872,7 +872,8 @@ def _plan_package(package, name, gid, page, root, *, stage_integ=True, plan_file
     import proofloop
     _bind_tool_mode(package, gid)
     st = projectpkg.intake_state(package, name)
-    criteria = planner_criteria(projectpkg.criteria_from_intake(st), goals.state(gid).get("criteria") or [])
+    criteria = planner_criteria(projectpkg.seed_criteria(package) or projectpkg.criteria_from_intake(st),
+                                goals.state(gid).get("criteria") or [])
     limits = projectpkg.limits_from_intake(st)
     answers = (st.get("answers") or {})
     goals.set_unapproved_text(gid, page)
@@ -1532,7 +1533,8 @@ def _autonomous_plan(gid, package, plan_file=None):
     # planner plans the intake done-when criteria, so add them to the goal first (the milestone stays
     # separate, covered by the journey, not a packet).
     try:
-        intake_criteria = projectpkg.criteria_from_intake(projectpkg.intake_state(package, name))
+        intake_criteria = (projectpkg.seed_criteria(package)
+                           or projectpkg.criteria_from_intake(projectpkg.intake_state(package, name)))
     except SystemExit as e:
         print("cannot plan yet: {0}".format(e))
         return {"stop": "AWAITING_INTAKE", "goal_id": gid, "reason": str(e)}

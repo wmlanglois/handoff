@@ -241,7 +241,7 @@ DUPLICATE_THRESHOLD = 0.6
 
 
 def review(contract, *, others=(), criteria=(), root=None, project_root=None,
-           integration_check=None, known_producers=(), enforce_closure=True):
+           integration_check=None, known_producers=(), enforce_closure=True, lane_ceiling=None):
     """Grade ONE assignment before it is dispatched. Returns a falsy Review when it must not run.
 
     `known_producers` names assignments already accepted for this goal, so a `needs` edge onto
@@ -443,11 +443,23 @@ def review(contract, *, others=(), criteria=(), root=None, project_root=None,
                                      (by_dest_stem[stem].get("provides") or "").strip()[:80] or "?")))
                 break
 
+    # -- sized to the lanes (goal item #8, 2026-09-25) ----------------------------------------------
+    # A packet whose artifact cannot fit in the smallest lane's output ceiling fails on every lane
+    # however its limit is raised; say so before dispatch instead of after two length stops.
+    if lane_ceiling:
+        from generation import TOKENS_PER_LINE
+        est = c.get("est_lines")
+        if type(est) is int and est > 0 and est * TOKENS_PER_LINE > lane_ceiling:
+            problems.append(("OVERSIZED",
+                             "est_lines {0} is ~{1} output tokens, above the smallest lane ceiling of {2}; "
+                             "split it into outcomes linked by `needs`".format(
+                                 est, est * TOKENS_PER_LINE, lane_ceiling)))
+
     return Review(name=c.get("name", "?"), ok=not problems, problems=problems)
 
 
 def gate(contracts, *, criteria=(), root=None, project_root=None, integration_check=None,
-         known_producers=(), enforce_closure=True):
+         known_producers=(), enforce_closure=True, lane_ceiling=None):
     """Run the check over a whole plan. Returns (accepted_contracts, [(contract, Review), ...]).
 
     Rejections are returned, not raised: a plan with one bad assignment should dispatch the other
@@ -460,7 +472,7 @@ def gate(contracts, *, criteria=(), root=None, project_root=None, integration_ch
     for c in cs:
         r = review(c, others=[o for o in cs if o is not c], criteria=criteria, root=root, project_root=project_root,
                    integration_check=integration_check, known_producers=known_producers,
-                   enforce_closure=enforce_closure)
+                   enforce_closure=enforce_closure, lane_ceiling=lane_ceiling)
         (ok if r.ok else bad).append(c if r.ok else (c, r))
     return ok, bad
 
@@ -558,7 +570,8 @@ Reply with JSON ONLY:
   "dest":"<package-relative path where that file lands in the project, e.g. game/history.py, or empty>",
   "provides":"<the exact public call this outcome exposes, e.g. simulate(route) -> dict; empty only for a non-code outcome>",
   "consumer":"<who calls `provides`: another outcome's dest (e.g. engine.py) or the launcher; empty only if nothing consumes it>",
-  "require_consumer":true
+  "require_consumer":true,
+  "est_lines":<estimated lines of the delivered artifact; required for code outcomes when LANE BUDGETS are given>
 }]}
 
 `worker` stays null unless one specific worker is required: the scheduler selects by capability.

@@ -49,6 +49,56 @@ def output_ceiling(worker, observed_prompt_tokens=None):
     return ceiling
 
 
+#: Harness default output allowance per model turn in tools mode (run/verified.py, tool jobs).
+TOOL_TURN_DEFAULT = 1400
+#: Rough tokens per line of delivered Python, for sizing packets against output budgets.
+TOKENS_PER_LINE = 12
+
+
+def lane_budgets(workers, tool_mode):
+    """What a packet on each lane can emit: the default per-response allowance (pinned or not) and
+    the ceiling an architect ADJUST can raise it to."""
+    import fleet
+    try:
+        from loop_config import LOOP
+        chat_default = int(LOOP.worker_max_tokens)
+    except Exception:
+        chat_default = 4096
+    rows = []
+    for w in workers:
+        pin = pinned_output_limit(w)
+        default = TOOL_TURN_DEFAULT if tool_mode == "tools" else chat_default
+        rows.append({"worker": w, "ctx": int((fleet.WORKERS.get(w) or {}).get("ctx") or 0),
+                     "per_response": pin or default, "pinned": bool(pin),
+                     "ceiling": pin or output_ceiling(w)})
+    return rows
+
+
+def lane_budget_text(rows, tool_mode):
+    """Planner-facing statement of the run's lane budgets."""
+    if not rows:
+        return ""
+    lines = ["LANE BUDGETS (the workers this run dispatches to; a packet may land on any of them):"]
+    for r in rows:
+        lines.append("  {0}: context {1} tokens; writes at most {2} output tokens per {3} ({4}); "
+                     "ceiling {5}".format(
+                         r["worker"], r["ctx"] or "unknown", r["per_response"],
+                         "model turn" if tool_mode == "tools" else "response",
+                         "PINNED by the operator" if r["pinned"] else "default; the architect may raise it on evidence",
+                         r["ceiling"] or "unknown"))
+    smallest = min(r["per_response"] for r in rows)
+    lines.append("Size outcomes to these budgets (about {0} tokens per line of Python). Set `est_lines` on "
+                 "every code outcome.".format(TOKENS_PER_LINE))
+    if tool_mode == "tools":
+        lines.append("In tools mode a file is written in sections: each files write/append must fit in "
+                     "{0} tokens (~{1} lines), so write a small first section and append the rest.".format(
+                         smallest, smallest // TOKENS_PER_LINE))
+    else:
+        lines.append("In chat mode the whole artifact is ONE response: keep each outcome under ~{0} lines "
+                     "or split it into outcomes linked by `needs`.".format(smallest // TOKENS_PER_LINE))
+    return "\n".join(lines)
+
+
 #: Sampling keys an operator may set per worker. A key set to None is NOT SENT, so the server's own
 #: configured value applies (e.g. a server launched with the model card's sampling).
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty")

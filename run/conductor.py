@@ -200,6 +200,18 @@ def _plan_feedback(findings, uncovered):
     return "\n".join(lines) + ("\nStill UNCOVERED: " + unc if unc else "")
 
 
+#: The lanes the current command will dispatch to, so planning can size outcomes to them (#8).
+#: Set by `autonomous` from --workers; None means the fleet default worker.
+_PLAN_LANES = {"workers": None}
+
+
+def _lane_budget(tool_mode):
+    import generation
+    rows = generation.lane_budgets(_PLAN_LANES["workers"] or [DEFAULT_WORKER], tool_mode)
+    ceilings = [r["ceiling"] for r in rows if r["ceiling"]]
+    return generation.lane_budget_text(rows, tool_mode), (min(ceilings) if ceilings else None)
+
+
 def plan_with_recovery(goal_id, goal_text, criteria, *, rounds=2, planner=None, echo=print, root=None,
                        extra_review=None, initial_feedback=""):
     """O3: plan, gate, and give the planner a BOUNDED chance to correct rejected work against the
@@ -216,14 +228,16 @@ def plan_with_recovery(goal_id, goal_text, criteria, *, rounds=2, planner=None, 
         try:
             import toolpolicy
             tool_mode = goals.state(goal_id, root=root).get("tool_mode")
+            budget_text, lane_ceiling = _lane_budget(tool_mode)
             contracts = planner(goal_text, criteria,
-                                feedback=feedback + "\n" + toolpolicy.instruction(tool_mode))
+                                feedback=feedback + "\n" + toolpolicy.instruction(tool_mode)
+                                + ("\n" + budget_text if budget_text else ""))
             contracts = [toolpolicy.apply(c, tool_mode) for c in contracts]
         except Exception as e:
             findings.append({"round": r, "error": repr(e)})
             break
         st_plan = goals.state(goal_id, root=root)
-        ok, bad = planning.gate(contracts, criteria=[{"id": i} for i in cids] if not isinstance(criteria[0], dict) else criteria, root=ROOT, project_root=st_plan.get("project_root"), integration_check=(st_plan.get("integration") or {}).get("check_source") or None, enforce_closure=False)
+        ok, bad = planning.gate(contracts, criteria=[{"id": i} for i in cids] if not isinstance(criteria[0], dict) else criteria, root=ROOT, project_root=st_plan.get("project_root"), integration_check=(st_plan.get("integration") or {}).get("check_source") or None, enforce_closure=False, lane_ceiling=lane_ceiling)
         if extra_review:
             kept = []
             for con in ok:
@@ -345,7 +359,8 @@ def propose_plan(goal_id, contracts, *, root=None, echo=print):
     st = goals.state(goal_id, root)
     import toolpolicy
     contracts = [toolpolicy.apply(c, st.get("tool_mode")) for c in contracts]
-    ok, bad = planning.gate(contracts, criteria=st["criteria"], root=ROOT, project_root=(st.get("project_root")), integration_check=(st.get("integration") or {}).get("check_source") or None)
+    ok, bad = planning.gate(contracts, criteria=st["criteria"], root=ROOT, project_root=(st.get("project_root")), integration_check=(st.get("integration") or {}).get("check_source") or None,
+                            lane_ceiling=_lane_budget(st.get("tool_mode"))[1])
     for c, rev in bad:
         echo(f"  REJECTED {c.get('name')}: {rev.why()}")
         cid = c.get("criterion_id")
@@ -1262,6 +1277,7 @@ def _cmd_autonomous(a):
     if not have_map and not budget_gone:
         # PLAN stop: no plan proposed or approved yet -> run the ordinary planner and stop.
         if not doc.get("approved") and not doc.get("proposed"):
+            _PLAN_LANES["workers"] = [w.strip() for w in (a.workers or DEFAULT_WORKER).split(",") if w.strip()]
             stop = _autonomous_plan(gid, Path(a.package).resolve(),
                                     plan_file=getattr(a, "plan_file", None))
             if stop is not None:

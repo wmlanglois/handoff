@@ -78,39 +78,35 @@ WK = {k: (v["url"], v["model"]) for k, v in _FW.items()}
 # stop. CODE_ROOT is a setting, defaulting to this repo -- a tree that always exists.
 DEFAULT_ROOT = CODE_ROOT
 
-SYSTEM_QUESTION = (
-"You are the Skeptic, coaching the worker to a better answer the way a good manager does -- by ASKING, "
-"not telling (the GROW model: reality, goal, options). You do NOT rule or verify. Read the actual "
-"artifact FIRST; use calc for any computed number. For claims that require an external source, "
-"ask for the source or mark the claim unverified; do not imply a lookup tool ran when none is available. "
-"Then ask EXACTLY THREE questions -- one from each angle below -- each pointed at "
-"THIS specific output (never generic), each 1-2 sentences, so the worker reconsiders BEFORE the work "
-"reaches the architect:\n"
-"1. TECHNICAL (is it right?): the single most likely error in the mechanics -- a wrong figure, a broken "
-"assumption, an unhandled edge case, a mis-citation.\n"
-"2. BIG PICTURE (does it fit?): whether it actually solves the real problem and answers what was asked -- "
-"the right question, not a nearby one -- and fits how it will be used.\n"
-"3. IMPROVEMENT (what's missing?): the one thing not considered that would make it more correct or "
-"complete -- an edge case, a cleaner approach, the next iteration.\n"
-"Output ONLY the three questions, numbered 1-3, each beginning with its angle label (TECHNICAL / BIG "
-"PICTURE / IMPROVEMENT). Do NOT tag SUPPORTED/OVERCLAIMING, do not restate the output, do not praise, do "
-"not answer your own questions. If an angle genuinely has nothing worth asking, write e.g. "
-"'1. TECHNICAL: none' for that line -- but try hard before you do.")
+# The skeptic's system prompts are prose and live in docs/PROMPTS.md (#46), so tuning how the
+# skeptic is prompted is a text edit, not a Python change. No fallback copy lives here: a second
+# copy is exactly how the file and the code drifted apart before.
+PROMPTS_FILE = Path(__file__).resolve().parent.parent / "docs" / "PROMPTS.md"
 
-SYSTEM_CHALLENGE = (
-"Recorded generation/usage evidence supplied with the claim is valid evidence for capacity decisions. "
-"Missing access is not proof of missing work. If evidence is insufficient, say review unavailable; "
-"if no evidence-backed challenge is found, say none found rather than inventing objections. "
-"You are the Skeptic: the JURY, not the judge. You raise doubt about a claim so the architect can "
-"rule on it; you never decide the claim is fine or 'supposed to be that way,' and you never rationalize "
-"it away. You may NOT challenge from memory: use your read-only tools to read the actual code or "
-"artifact the claim names, and read ONLY that — never design docs or rationale that would let you "
-"explain a discrepancy away. Every challenge cites a specific file:line you read. Never agree, praise, "
-"or restate. Call done with 2-3 challenges, each naming the exact behavior you read (file:line), the "
-"assumption it breaks, and one sharp question for the architect to answer. When the claim states a "
-"number, check it with calc. Reading the file shows what the file contains. An ACCEPTANCE CONTRACT "
-"supplied with the claim (criterion, interface, oracle, failure output) is context for your questions, "
-"not rationale and not a checklist to grade against.")
+
+def load_prompt(name, path=None):
+    """The text inside the one `text` fence under `### <name>` in docs/PROMPTS.md."""
+    p = Path(path) if path else PROMPTS_FILE
+    lines = p.read_text(encoding="utf-8").splitlines()
+    try:
+        i = lines.index("### " + name)
+    except ValueError:
+        raise RuntimeError("prompt {0!r} missing from {1}".format(name, p))
+    j = i + 1
+    while j < len(lines) and not lines[j].startswith("#"):
+        if lines[j].strip() == "```text":
+            k = lines.index("```", j + 1)
+            body = "\n".join(lines[j + 1:k]).strip("\n")
+            if not body.strip():
+                raise RuntimeError("prompt {0!r} in {1} is empty".format(name, p))
+            return body
+        j += 1
+    raise RuntimeError("prompt {0!r} in {1} has no text fence".format(name, p))
+
+
+SYSTEM_QUESTION = load_prompt("SKEPTIC QUESTION")
+
+SYSTEM_CHALLENGE = load_prompt("SKEPTIC CHALLENGE")
 
 def review_read_instruction(artifact=None):
     """What the review skeptic is told to read FIRST. Names the ACTUAL deliverable when known, so the
@@ -120,17 +116,7 @@ def review_read_instruction(artifact=None):
     return "read_file the file it names (usually output.md)"
 
 
-SYSTEM_REVIEW = (
-"You are the Skeptic filter (the JURY, not the judge) on a LOCAL WORKER'S OUTPUT before it reaches the "
-"architect. The user message is the worker's output; it claims some work was done. Do NOT trust it and "
-"do NOT rationalize it. Use your read-only tools to read ONLY the ACTUAL artifact the output names — "
-"never design docs or rationale, which you must not use to explain a discrepancy away. Then call done "
-"with a SHORT note (1-3 sentences) prefixed 'SKEPTIC:' that says what you checked (file:line) and names "
-"any gap between what the output claims and what the file actually contains, tagging it SUPPORTED / "
-"OVERCLAIMING / HALLUCINATING / UNVERIFIABLE. VERIFY EVERY COMPUTED NUMBER with the calc tool -- never "
-"eyeball arithmetic; if calc disagrees with a figure the output states, say so and give BOTH numbers so "
-"the architect does not have to compute it. You raise the doubt; the architect decides. Never conclude something is 'supposed to be "
-"that way,' never restate the claim, never praise.")
+SYSTEM_REVIEW = load_prompt("SKEPTIC REVIEW")
 
 def tools():
     def t(n, d, p, req): return {"type":"function","function":{"name":n,"description":d,

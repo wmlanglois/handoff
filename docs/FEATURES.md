@@ -1,5 +1,28 @@
 # Handoff feature wiki
 
+## Skeptic evidence and tools-mode coaching
+
+With a configured skeptic and the existing `skeptic_bounce` setting on, the bundled
+tool runtime offers a completed, receipt-bound draft to the three-question coach
+before the verifier's oracle. Questions return in the same worker tool conversation;
+revisions use normal receipted mutations, within the existing `max_tool_rounds` cap.
+No matching draft, no remaining turn allowance, interrupted review and external-runtime
+incompatibility are recorded explicitly, not called successful coaching. A bad revision
+goes through the ordinary failure/retry path; no unreceipted rollback is introduced.
+
+Architect challenges use the target assignment's actual tools/chat workspace and
+recorded generation summary. Missing evidence roots never fall back to the source
+repository. Skeptic findings are advisory, not acceptance decisions.
+
+Persistence: SQLite `jobs.sqlite3` stores job lifecycle and locks, **not every skeptic
+exchange**. The tool JSON checkpoint stores coaching status/questions and worker
+continuation. Under the resolved runs root, `tooljob-*.jsonl` records draft/final
+artifact hashes and coaching outcomes, `verified-*.jsonl` records `skeptic_q` and
+ordinary oracle/judge outcomes, and `skeptic-challenge-*.jsonl` records challenge
+evidence roots, generation summaries and replies/unavailability. These private files
+are not published. Correlate workspace/run identity and attempt; SQLite alone is not
+a complete review transcript. Existing retention limitations remain in #30.
+
 ## `python run/litellm_import.py`
 
 Optional existing-environment adapter; [step-by-step guide](LITELLM-IMPORT.md).

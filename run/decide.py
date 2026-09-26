@@ -1183,25 +1183,69 @@ def reconsider(decision, doubt, delta, model=None, timeout=240, runner=None):
     return decision, "RETAINED", why or "architect retained the decision"
 
 
+def challenge_root(goal_id, target):
+    """Resolve the actual execution workspace, never the source repository."""
+    if not target:
+        return None
+    assignment = goals.state(goal_id).get("assignments", {}).get(target)
+    if assignment is None:
+        return None
+    contract = assignment.get("contract") or {}
+    rid = goals.run_id(goal_id, target)
+    if contract.get("tools"):
+        import tooljob
+        from verified import tool_workspace_id
+        return tooljob.workspace_dir(tool_workspace_id(rid))
+    return fleet_runs_root() / ("verified-" + rid)
+
+
 def challenge(decision, delta, worker=SKEPTIC_WORKER, root=None, rounds=2, artifact_root=None):
     """Let the existing skeptic question the ARCHITECT's conclusion.
 
     Advisory by design. The skeptic is the jury; recording its doubt beside the decision is the
     point, because nothing else in this repo examines an architect conclusion at all."""
+    from log import logger
+    emit = logger("skeptic-challenge", echo=False)
+    evidence_root = artifact_root or root
+    target = decision.get("assignment")
+    summary = "No assignment-specific generation evidence supplied."
+    if target and delta.get("goal_id"):
+        try:
+            summary = generation_summary(goals.run_id(delta["goal_id"], target))[0]
+        except Exception:
+            summary = "Generation evidence unavailable."
+    if not worker or not evidence_root or not Path(evidence_root).is_dir():
+        note = "skeptic unavailable: review root missing or skeptic disabled; not evidence that no artifact exists"
+        emit("skeptic_challenge", status="unavailable", target=target,
+             evidence_root=str(evidence_root) if evidence_root else None, generation_summary=summary)
+        emit.close()
+        return note
     try:
         sys.path.insert(0, str(ROOT / "skeptic"))
         import skeptic as sk
     except Exception as e:
+        emit("skeptic_challenge", status="unavailable", error=type(e).__name__)
+        emit.close()
         return "skeptic unavailable: {0}".format(e)
     claim = ("The architect decided: {0}. Justification: {1}. Unmet criteria: {2}. "
              "Challenge whether this action can actually advance the goal.".format(
                  json.dumps({k: v for k, v in decision.items() if k not in ("brief",)}),
                  str(decision.get("why", ""))[:300], delta.get("unmet")))
+    claim += ("\nRecorded generation evidence:\n" + summary[:6000] +
+              "\nAssess a capacity adjustment using this evidence. An unfinished or absent artifact "
+              "after truncation is not by itself a reason to reject an adjustment. If evidence is "
+              "unavailable say so; do not infer missing work from missing access.")
     try:
         # Root the skeptic AT THE ARTIFACT. The first live run rooted it at the repo, where
         # the delivered file does not exist, and it produced three confident challenges
         # about code it had never read. A skeptic that cannot see the artifact does not
         # produce doubt, it produces fiction -- the exact failure the field scan warned of.
-        return str(sk.run(claim, worker, str(artifact_root or root or ROOT), rounds))[:1500]
+        answer = str(sk.run(claim, worker, str(evidence_root), rounds))[:1500]
+        emit("skeptic_challenge", status="reviewed", target=target, evidence_root=str(evidence_root),
+             generation_summary=summary, claim=claim, answer=answer)
+        return answer
     except Exception as e:
+        emit("skeptic_challenge", status="error", target=target, error=type(e).__name__)
         return "skeptic error: {0}".format(e)
+    finally:
+        emit.close()

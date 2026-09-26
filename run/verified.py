@@ -2054,6 +2054,7 @@ def main():
         answers IN ITS OWN THREAD, and the result is only kept if the oracle still passes."""
         at["round"] = rnd
         live_worker.delivery_failure = ""
+        live_worker.tool_coaching = None
         _reply, _fk = "", ""      # worker commentary (chat reply) + failure-kind channel (seams 2,3,5)
         reject_tail = f"\n\nYour previous attempt was REJECTED. Fix exactly this:\n{guidance}" if guidance else ""
         _prev_edits = captured.get("unaccepted_edits") or []
@@ -2082,13 +2083,22 @@ def main():
                 # worker can inspect/import it AND the frozen oracle (which runs there) can too. The
                 # deliverable artifact itself is never staged -- the worker writes that.
                 _stage = _build_tool_manifest(card, _art)
+                def _tool_review(root, draft):
+                    q = skeptic.run(
+                        f"The deliverable is `{_art}`. Task: {brief[:2000]}. "
+                        "Read this draft and ask technical, big-picture and improvement questions.",
+                        SKEPTIC_WORKER, root, 8, artifact=_art, system=skeptic.SYSTEM_QUESTION) or ""
+                    emit("skeptic_q", round=rnd, mode="tools-precheck", artifact=_art,
+                         evidence_root=root, q=q[:6000])
+                    return q
                 try:
                     r = tooljob.run_tooljob(worker, base + reject_tail, tool_workspace_id(name),
                                             max_rounds=card.get("max_tool_rounds", 12),
                                             max_tokens=int(card.get("max_output_tokens") or 1400),
                                             stage=_stage or None, artifact=_art, attempt=rnd,
                                             lineage=_tool_lineage_token(ws),
-                                            branch=bool(card.get("branch")))
+                                            branch=bool(card.get("branch")),
+                                            draft_review=_tool_review if skeptic_bounce and SKEPTIC_WORKER else None)
                 except RuntimeError as e:
                     # The agent's own round limit ("checkpoint retained") is a FAILED ATTEMPT, not a
                     # harness crash: filed as CRASH it was re-queued as worker-unavailable three
@@ -2115,6 +2125,7 @@ def main():
             if output is None:
                 output = r["content"]
             review_root = r["workspace"]
+            live_worker.tool_coaching = r.get("coaching")
             _reply = r.get("content") or ""          # the worker's chat reply -- NOT the sealed artifact
             _fk = r.get("failure_kind") or ""
             # Verification<->integration consistency (doc 05): flag staged dependencies the worker
@@ -2201,8 +2212,13 @@ def main():
         return output, review_root, ()
 
     live_worker.last_question = ""
+    live_worker.tool_coaching = None
 
     def live_skeptic(rnd, output, review_root):
+        if not SKEPTIC_WORKER:
+            return "SKEPTIC: skipped (no skeptic configured)"
+        if card.get("tools") and live_worker.tool_coaching:
+            return "Pre-check tool coaching (advisory): " + json.dumps(live_worker.tool_coaching)
         if skeptic_bounce and redo_mode == "conversation" and convo:
             # the skeptic already asked and the worker answered in-thread; tell the judge that.
             return ("SKEPTIC asked: " + (live_worker.last_question or "(no question raised)") +

@@ -559,8 +559,7 @@ def _run_goal_impl(goal_id, workers, max_seconds=3600, max_rounds=4, poll_cards=
                         prop = next((p for p in delta.get("proposals") or []
                                      if p["id"] == dec.get("proposal_id")), None)
                         target = (prop or {}).get("from") or target
-                    art_root = (fleet_runs_root() / ("verified-" + goals.run_id(goal_id, target))
-                                if target else None)
+                    art_root = decide.challenge_root(goal_id, target)
                     if (dec.get("action") or "").upper() == decide.INVESTIGATE and deliverable_root:
                         # An INVESTIGATE is about the PROJECT root. Rooting the skeptic at the
                         # failed run's workspace made it "prove" the project held no config

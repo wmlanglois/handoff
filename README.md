@@ -14,6 +14,11 @@ Handoff explores whether a strong conductor can turn smaller, cheaper models int
 
 The [feature and command catalog](docs/FEATURES.md) describes the current callable surface. Research, current implementation, and demonstrated end-to-end reliability are three different things.
 
+The bundled tools path supports a pre-check skeptic coaching turn on a receipted
+draft, within the existing turn budget. Review evidence and continuation are recorded
+in private checkpoints/JSONL, not solely SQLite. See
+[skeptic evidence and logging](docs/FEATURES.md#skeptic-evidence-and-tools-mode-coaching).
+
 See [current implementation status and open work](docs/IMPLEMENTATION-STATUS.md) for the September 25 reconciliation of shipped fixes, remaining connections, and research proposals. The original research documents are preserved; their dated recommendations are not current operator instructions.
 
 ## Start here: one project, in order

@@ -1,5 +1,15 @@
 # Implementation status and research connections
 
+## Local follow-up: skeptic evidence connection (#32)
+
+Bundled tool drafts now have bounded, receipt-checked pre-oracle coaching in the
+existing conversation. Architect challenges resolve tools workspaces and include
+generation evidence; missing roots report unavailable instead of falling back to
+the repo. Structured private review logs complement SQLite job/lock records.
+External runtimes have an explicit unsupported-coaching event, not an invented pass.
+Offline tests exercise real bundled tool/service edits and receipt resolution with
+scripted model/reviewer responses. No live trial was changed by this patch.
+
 ## Local follow-up: LiteLLM discovery/import (#31)
 
 `run/litellm_import.py` previews an explicitly supplied YAML/JSON config or gateway

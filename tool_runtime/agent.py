@@ -49,17 +49,21 @@ def run(dispatcher, execution_id, job, worker):
         generations = saved.get("generations", [])
         incomplete = saved.get("incomplete", [])
         truncations = saved.get("truncations", 0)
+        coaching = saved.get("coaching")
+        if coaching and coaching.get("status") == "started":
+            coaching = {"status": "interrupted", "reason": "review did not checkpoint a result"}
     else:
         messages = [{"role": "user", "content": job["prompt"]}]
         rounds = 0
         generations = []
         incomplete = []
         truncations = 0
+        coaching = None
 
     def save():
         dispatcher.checkpoint(execution_id, {"messages": messages, "rounds": rounds,
                                              "generations": generations, "incomplete": incomplete,
-                                             "truncations": truncations})
+                                             "truncations": truncations, "coaching": coaching})
 
     save()
     maximum = int(job.get("max_rounds", 16))
@@ -132,9 +136,30 @@ def run(dispatcher, execution_id, job, worker):
                                        "checkpoint preserved; no incomplete calls executed")
                 continue
             if not pending.get("tool_calls"):
+                review = job.get("draft_review")
+                if review and coaching is None:
+                    rounds += 1  # the draft completion also consumes a turn
+                    coaching = {"status": "started" if rounds < maximum else "budget_exhausted"}
+                    save()  # interrupted review must not silently spend again on resume
+                    if rounds < maximum:
+                        try:
+                            questions = str(review() or "")[:6000]
+                            coaching = {"status": "questions" if "?" in questions else "no_revision",
+                                        "questions": questions}
+                        except Exception as exc:
+                            coaching = {"status": "unavailable", "error": type(exc).__name__}
+                        if coaching["status"] == "questions":
+                            messages.append(dict(pending, role="assistant"))
+                            messages.append({"role": "user", "content":
+                                "A read-only skeptic reviewed your actual draft. Address these questions "
+                                "using existing files and advertised tools. Fix genuine problems; otherwise "
+                                "explain why the draft stands. Preserve correct work. Any edits must use "
+                                "normal receipted delivery, not a fenced replacement.\n" + questions})
+                            save()
+                            continue
                 save()
                 return {"choices": [{"message": {"content": pending.get("content") or ""}}],
-                        "generations": generations}
+                        "generations": generations, "coaching": coaching}
             messages.append(pending)
             save()
         existing = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
@@ -154,6 +179,9 @@ def run(dispatcher, execution_id, job, worker):
                              "content": json.dumps(result)})
             save()
         rounds += 1
+        save()
+    if job.get("draft_review") and coaching is None:
+        coaching = {"status": "budget_exhausted", "reason": "no completed draft within tool budget"}
         save()
     return {"choices": [{"message": {"content": "Tool round limit reached; work remains in the workspace."}}],
             "generations": generations, "loop_stop": "tool_round_budget"}

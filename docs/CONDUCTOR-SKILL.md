@@ -10,6 +10,15 @@ tool/coding readiness. No server setup/restart or provider-setting rewrite is ne
 
 Packet completion is not project completion.
 
+Skeptic coaching is advisory. On the bundled tools path, a receipt-bound draft can
+receive the three questions and a same-conversation tool revision before the oracle;
+never manufacture a tool receipt from chat text or reset turns to obtain a revision.
+Missing review roots are unavailable evidence, not proof of no artifact. For ADJUST,
+use recorded generation evidence rather than demanding completed code after truncation.
+Read the private coaching/challenge JSONL and checkpoint alongside the ordinary
+oracle/judge results; SQLite job rows are not a transcript. External runtime coaching
+is not implied by support in the bundled runtime.
+
 ## Before execution
 
 Read the [ordered setup](../README.md#start-here-one-project-in-order), [command catalog](FEATURES.md), and [current implementation boundaries](IMPLEMENTATION-STATUS.md). Historical research is not a substitute for the current command path.

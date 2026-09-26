@@ -397,18 +397,18 @@ def _workspace_lock_path(workspace_id):
 
 
 def run_tooljob(worker, brief, workspace_id, max_rounds=16, max_tokens=1400, stage=None,
-                artifact=None, attempt=0, lineage=None, branch=False):
+                artifact=None, attempt=0, lineage=None, branch=False, draft_review=None):
     # Serialise the WHOLE invocation for this workspace, not just checkpoint writes: two runners of
     # the same tool workspace must never interleave, even when their checkpoints live in different
     # lineage directories. Reentrant within a process.
     with exclusive_file(_workspace_lock_path(workspace_id), timeout=1.0):
         return _run_tooljob_locked(worker, brief, workspace_id, max_rounds=max_rounds,
                                    max_tokens=max_tokens, stage=stage, artifact=artifact,
-                                   attempt=attempt, lineage=lineage, branch=branch)
+                                   attempt=attempt, lineage=lineage, branch=branch, draft_review=draft_review)
 
 
 def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1400, stage=None,
-                        artifact=None, attempt=0, lineage=None, branch=False):
+                        artifact=None, attempt=0, lineage=None, branch=False, draft_review=None):
     import hashlib
     agent = load_agent()                      # fails here, by name, if the dependency is unset
     emit = logger(f"tooljob-{workspace_id}")
@@ -442,6 +442,19 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
     from generation import worker_output_limit
     max_tokens = worker_output_limit(worker, max_tokens)
     job = {"prompt": brief, "workspace_id": workspace_id, "max_rounds": max_rounds, "max_tokens": max_tokens}
+    if draft_review:
+        if _rt["kind"] == "bundled":
+            def review_draft():
+                text, authored = _receipted_artifact(d, execution_id, workspace_id, artifact, lineage=lineage)
+                if text is None:
+                    emit("skeptic_draft_unavailable", artifact=artifact, reason="no matching artifact receipt")
+                    return ""
+                emit("skeptic_draft", attempt=attempt, artifact=artifact, evidence_root=str(ws),
+                     sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(), authored=authored)
+                return draft_review(str(ws), text)
+            job["draft_review"] = review_draft
+        else:
+            emit("skeptic_draft_unavailable", reason="external runtime lacks bundled coaching hook")
     # Logical-job continuity across OUTER attempts (N -> N+1) and process restart: by default a
     # retry continues this execution's own prior work (bounded, read-only, no side-effect replay);
     # a fresh conversation is taken ONLY when the caller explicitly branches, never as an accidental
@@ -491,9 +504,13 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
         res = agent.run(d, execution_id, job, agent_worker)
     except (RuntimeError, OSError) as exc:   # OSError covers a socket/read TimeoutError
         _emit_generations((d.checkpoint(execution_id) or {}).get("generations"))
+        emit("skeptic_coaching_outcome", coaching=(d.checkpoint(execution_id) or {}).get("coaching"),
+             outcome="tool_loop_stopped")
         emit("tool_loop_stop", reason=str(exc)[:200])
         raise
     _emit_generations(res.get("generations"))
+    emit("skeptic_coaching_outcome", coaching=(d.checkpoint(execution_id) or {}).get("coaching"),
+         outcome="returned_to_verifier")
     if res.get("loop_stop"):
         emit("tool_loop_stop", reason=res["loop_stop"])
     content = (res["choices"][0]["message"].get("content") or "").strip()
@@ -520,8 +537,13 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
         emit("provenance_none",
              reason="No matching service write receipt for final artifact bytes")
     emit("tooljob-done", chars=len(content), ws=str(ws), artifact_bytes=len(artifact_content or ""), attribution=how)
+    if draft_review:
+        emit("skeptic_delivery", attempt=attempt, artifact=artifact,
+             sha256=hashlib.sha256(artifact_content.encode("utf-8")).hexdigest() if artifact_content is not None else None,
+             coaching=(d.checkpoint(execution_id) or {}).get("coaching"), attribution=how)
     emit.close()
-    return {"content": content, "workspace": str(ws), "artifact_content": artifact_content, "attribution": how}
+    return {"content": content, "workspace": str(ws), "artifact_content": artifact_content, "attribution": how,
+            "coaching": (d.checkpoint(execution_id) or {}).get("coaching")}
 
 
 def _write_receipt_shas(messages, target):

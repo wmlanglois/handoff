@@ -488,3 +488,101 @@ a `MUST_DIFFER` constraint between worker and skeptic.
 12. **Drop `awesome-cursorrules` as a source for role prompts** — it has one security rule against
     40+ frontend ones and nothing about loop control
     (https://github.com/PatrickJS/awesome-cursorrules).
+
+---
+
+## 8. ADDENDUM (September 25): context, memory and hidden reasoning
+
+A dated addendum, not operating instructions. It adds one conference talk, a short look at how
+current hybrid-reasoning open models expose thinking controls, and what our own first tool-enabled
+runs showed. The observations are stated in general terms; they are not benchmarks, and nothing
+here describes a particular machine or fleet.
+
+### 8.1 Context engineering and agent memory (talk summary)
+
+Source: Lamis Mukta (Anthropic applied AI), "The evolution of AI agent memory from 1 session to
+persistent", AI DevCon (https://www.youtube.com/watch?v=O5DKmCspw5M). Paraphrased from the talk.
+
+- **Simple first.** A short instructions file injected at session start steers agents remarkably
+  well. Its failure mode is growth: a long file crowds the context.
+- **Progressive disclosure.** Skills expose a short header and load their full body only when
+  relevant, so detail is available without being always in context.
+- **Memory as a file system.** The current recommendation is plain markdown files that agents search
+  with ordinary tools, rather than bespoke memory APIs. Memory may grow large if it is indexed and
+  searchable.
+- **Production guardrails.** Version every change (who, which session, rollback). Check a hash before
+  committing an edit and redo it if the file changed underneath. Make organization-wide memory
+  read-only for agents, with a writable scratchpad each. Keep memory portable behind a clean
+  interface.
+- **The limit of in-session memory.** An agent doing a task and curating memory at the same time
+  splits its effort, and it only sees its own session, so it cannot notice patterns that repeat
+  across sessions or across a fleet. Memories also go stale.
+- **Out-of-band review ("dreaming").** A separate batch process with its own budget reads the memory
+  store plus a window of transcripts, *including tool calls and metadata*, looks for patterns that
+  recur often enough to matter, and proposes memory changes with example transcripts and prevalence
+  counts. A human accepts or rejects each change. The examples given include a whole topic missing
+  from the "curriculum" and a fleet-wide misconfiguration visible only in tool calls.
+- **Harness vs. agent.** Once it is clear which memory primitives work, they move into
+  deterministic harness code (versioning, hashing) instead of being left to the agent.
+
+### 8.2 Thinking controls on hybrid-reasoning open models
+
+- The Qwen3.x family is hybrid: thinking and non-thinking in one model. The Qwen3.8 chat template
+  exposes a reasoning-effort level (low / medium / xhigh, default xhigh) alongside an
+  enable-thinking switch, and recommends different sampling for each mode
+  (https://unsloth.ai/docs/models/qwen3.8, https://qwenlm.github.io/blog/qwen3/).
+- Users report that the default level thinks at length even on simple requests. Lowering effort to
+  medium was reported as noticeably faster without measured quality loss, and disabling thinking as
+  much faster again; one report questions whether the disable switch still works on every build
+  (https://huggingface.co/Qwen/Qwen3.8-27B/discussions/113,
+  https://huggingface.co/Qwen/Qwen3.8-27B/discussions/97).
+- llama.cpp can cap reasoning with a server-level budget that injects an end-of-thinking message;
+  per-request budget control is a separate discussion
+  (https://github.com/ggml-org/llama.cpp/discussions/21445).
+- No source we found settles whether thinking helps or hurts *tool-using* coding. Vendors say the
+  models do agentic work in both modes. This needs a matched measurement, not a default.
+
+### 8.3 Early observations from our own tool-enabled runs
+
+Stated generally; the defects named here are tracked in the issue tracker.
+
+1. **Hidden reasoning is budget you cannot see unless you record it.** One request path turned
+   thinking off and another did not, so tool-loop turns inherited the server's default and thought.
+   The recorded symptom was just "stopped at the output limit". Raising the limit bought more
+   reasoning, not more code. Only reading the saved conversations showed replies that were almost
+   entirely reasoning. Lessons: every request path must send the same explicit thinking setting; the
+   size of the reasoning belongs in generation evidence; and a cut-off that is all reasoning is a
+   different failure from truncated code.
+2. **Re-sending old reasoning is context bloat.** Earlier turns' reasoning, kept in the history sent
+   back to the model, filled the window and ended attempts early. The full record belongs outside
+   the prompt; the prompt needs the task, recent turns, and references to reread.
+3. **Bookkeeping must not count as progress.** A progress measure that counted any new file as
+   evidence treated the tool service's own call receipts as "investigation". A packet then ran to its
+   round cap with an unchanged artifact failing the same check each round. Same bytes plus same
+   failure should mean no progress.
+4. **A harness wait is not an infrastructure failure.** When a whole-packet timeout killed a run
+   before it wrote its result, the record fell back to "worker unavailable". The planning layer then
+   reasoned about a broken lane that was not broken. Timeouts need their own outcome, sized to the
+   work.
+5. **The tool environment itself did work.** Accepted packets came from genuine multi-turn loops:
+   write, run a check, edit a few lines, check again; and sectioned writes (write, then append). The
+   failures were starvation of that loop, not its absence.
+6. **Memory can feed over-planning.** A retained correction reached the worker, which then planned a
+   whole module in its head from it before inspecting any file. This supports 8.1's
+   progressive-disclosure point: give workers short lesson headers and let them read the rest when
+   relevant.
+7. **Cross-run review found what per-packet summaries missed.** Every defect above was found by
+   reading across runs (tool calls, stop reasons, checkpoints), not from any single packet's
+   receipt. This is the out-of-band review idea in 8.1, done by hand.
+
+### 8.4 What this suggests for us
+
+- **Adopt an out-of-band reviewer**: advisory and proposal-only. After a drain or nightly, it reads
+  generation evidence, tool calls and checkpoints across runs, and proposes findings with example runs
+  and counts, such as reasoning-heavy cut-offs, repeated identical failures, or one lane's recurring
+  timeouts. A human or the architect approves each one before it becomes a lesson.
+- **Version and scope retained lessons**: record the source run, allow rollback, keep project-wide
+  lessons separate from per-packet notes, and check them for staleness.
+- **Progressive disclosure for lessons**: headers in the prompt, bodies on demand through file tools.
+- **Measure thinking, don't assume it**: a matched A/B (thinking off vs. a low effort level) on the
+  same packets before choosing a default for tool-using workers.

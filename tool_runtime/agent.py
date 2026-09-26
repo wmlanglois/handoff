@@ -100,7 +100,8 @@ def run(dispatcher, execution_id, job, worker):
                 save()
                 raise RuntimeError("tool context capacity exceeded (estimated input + output + reserve); "
                                    "checkpoint preserved; configure a supported budget or reduce input")
-            response = _post(worker["url"].rstrip("/") + "/v1/chat/completions", request, timeout=300)
+            response = _post(worker["url"].rstrip("/") + "/v1/chat/completions", request,
+                             timeout=int(worker.get("request_timeout") or 300))
             generations.append(response_evidence(response, request))
             pending = response["choices"][0]["message"]
             reason = response["choices"][0].get("finish_reason")

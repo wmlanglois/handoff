@@ -478,12 +478,14 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
 
     agent_worker = {"url": w["url"], "model": w["model"], "ctx": w.get("ctx", 8192), "slots": 2}
     agent_worker.update(_request_profile_for(worker, w))
+    from generation import request_timeout
+    agent_worker["request_timeout"] = request_timeout(worker, int(max_tokens or 1400))
     if agent_worker.get("request_overrides") or agent_worker.get("request_omit"):
         emit("request_profile", overrides=agent_worker.get("request_overrides"),
              omit=agent_worker.get("request_omit"))
     try:
         res = agent.run(d, execution_id, job, agent_worker)
-    except RuntimeError as exc:
+    except (RuntimeError, OSError) as exc:   # OSError covers a socket/read TimeoutError
         _emit_generations((d.checkpoint(execution_id) or {}).get("generations"))
         emit("tool_loop_stop", reason=str(exc)[:200])
         raise

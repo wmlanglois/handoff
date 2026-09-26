@@ -1928,7 +1928,7 @@ def main():
         print("FLEET_OUTCOME=worker-unavailable")
         sys.exit(EXIT_CODES["worker-unavailable"])
     name = card["name"]; worker = card["worker"]; brief = card["brief"]
-    from generation import worker_output_limit
+    from generation import request_timeout, worker_output_limit
     # Pinned operator limit > this assignment's own budget (raised by an architect ADJUST from
     # recorded length-limited turns) > the harness default.
     worker_max_tokens = worker_output_limit(worker, int(card.get("max_output_tokens") or _LOOP.worker_max_tokens))
@@ -2136,7 +2136,7 @@ def main():
             else:
                 convo.append({"role": "user", "content": "Your previous attempt was REJECTED. Fix exactly "
                               f"this, keeping everything already correct unchanged:\n{guidance}"})
-            msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200, profile=True,
+            msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=request_timeout(worker, worker_max_tokens, floor=200), profile=True,
                             preserve_first_user=bool(carry_context))
             output = _take(msg, _ti, rnd)
             convo.append({"role": "assistant", "content": output})
@@ -2145,7 +2145,7 @@ def main():
             review_root = str(ws)
             emit("convo", round=rnd, turns=len(convo), ctx_chars=sum(len(m["content"]) for m in convo))
         else:  # rewrite: a fresh unanchored swing each round, blind to the prior draft
-            msg, _ti = chat(worker, [{"role": "user", "content": base + reject_tail}], max_tokens=worker_max_tokens, timeout=200, profile=True)
+            msg, _ti = chat(worker, [{"role": "user", "content": base + reject_tail}], max_tokens=worker_max_tokens, timeout=request_timeout(worker, worker_max_tokens, floor=200), profile=True)
             output = _take(msg, _ti, rnd)
             output = _keep_artifact(ws, output, _prior_artifact(ws),
                                     artifact=card.get("artifact") or "output.md", rnd=rnd)
@@ -2176,7 +2176,7 @@ def main():
                               "one. Where a question reveals a real problem, fix it; where it does not, "
                               "keep your answer and briefly say why it holds. Return the COMPLETE answer "
                               "in the required format, not just replies to the questions."})
-                msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200, profile=True,
+                msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=request_timeout(worker, worker_max_tokens, floor=200), profile=True,
                                 preserve_first_user=bool(carry_context))
                 revised = _take(msg, _ti, rnd)
                 convo.append({"role": "assistant", "content": revised})

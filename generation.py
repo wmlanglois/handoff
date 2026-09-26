@@ -99,6 +99,25 @@ def lane_budget_text(rows, tool_mode):
     return "\n".join(lines)
 
 
+#: Conservative generation speed assumed when a worker declares none (`min_tokens_per_s`). A request
+#: timeout must cover the output it asks for: a fixed timeout turns every raised output limit into a
+#: timeout once the limit outgrows it (observed 2026-09-25: ADJUST to 16000 tokens, 300 s timeout).
+DEFAULT_MIN_TOKENS_PER_S = 20
+REQUEST_OVERHEAD_S = 60
+
+
+def request_timeout(worker, max_tokens, floor=300):
+    """Seconds to wait for one generation of up to `max_tokens` on `worker`."""
+    import fleet
+    rate = (fleet.WORKERS.get(worker) or {}).get("min_tokens_per_s") or DEFAULT_MIN_TOKENS_PER_S
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        rate = DEFAULT_MIN_TOKENS_PER_S
+    need = REQUEST_OVERHEAD_S + int(max_tokens or 0) / max(rate, 1.0)
+    return int(max(floor, need))
+
+
 #: Sampling keys an operator may set per worker. A key set to None is NOT SENT, so the server's own
 #: configured value applies (e.g. a server launched with the model card's sampling).
 SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty")

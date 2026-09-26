@@ -12,7 +12,8 @@ from generation import response_evidence
 
 #: What this runtime implements. tooljob records it per job and preflight refuses a tools-mode run
 #: on a runtime missing the required ones, so a less capable runtime is never used silently.
-CAPABILITIES = ("length_recovery", "generation_evidence", "incremental_files", "context_check")
+CAPABILITIES = ("length_recovery", "generation_evidence", "incremental_files", "context_check",
+                "request_profile")
 
 
 def _post(url, payload, token=None, timeout=120):
@@ -86,6 +87,11 @@ def run(dispatcher, execution_id, job, worker):
                 "tool_choice": "auto", "max_tokens": int(job.get("max_tokens", 1400)),
                 "temperature": 0.2, "stream": False,
             }
+            # Operator request profile (sampling/thinking) resolved by the harness; omitted keys fall
+            # back to the server's own configured value.
+            request.update(worker.get("request_overrides") or {})
+            for key in worker.get("request_omit") or ():
+                request.pop(key, None)
             # Conservative estimate includes tool schemas and call arguments, not just content.
             # Do not trim a tool-call/result group or silently discard essential project material.
             estimated_input = (len(json.dumps({"messages": messages, "tools": tools},

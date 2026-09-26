@@ -2136,7 +2136,7 @@ def main():
             else:
                 convo.append({"role": "user", "content": "Your previous attempt was REJECTED. Fix exactly "
                               f"this, keeping everything already correct unchanged:\n{guidance}"})
-            msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200,
+            msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200, profile=True,
                             preserve_first_user=bool(carry_context))
             output = _take(msg, _ti, rnd)
             convo.append({"role": "assistant", "content": output})
@@ -2145,7 +2145,7 @@ def main():
             review_root = str(ws)
             emit("convo", round=rnd, turns=len(convo), ctx_chars=sum(len(m["content"]) for m in convo))
         else:  # rewrite: a fresh unanchored swing each round, blind to the prior draft
-            msg, _ti = chat(worker, [{"role": "user", "content": base + reject_tail}], max_tokens=worker_max_tokens, timeout=200)
+            msg, _ti = chat(worker, [{"role": "user", "content": base + reject_tail}], max_tokens=worker_max_tokens, timeout=200, profile=True)
             output = _take(msg, _ti, rnd)
             output = _keep_artifact(ws, output, _prior_artifact(ws),
                                     artifact=card.get("artifact") or "output.md", rnd=rnd)
@@ -2176,7 +2176,7 @@ def main():
                               "one. Where a question reveals a real problem, fix it; where it does not, "
                               "keep your answer and briefly say why it holds. Return the COMPLETE answer "
                               "in the required format, not just replies to the questions."})
-                msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200,
+                msg, _ti = chat(worker, convo, max_tokens=worker_max_tokens, timeout=200, profile=True,
                                 preserve_first_user=bool(carry_context))
                 revised = _take(msg, _ti, rnd)
                 convo.append({"role": "assistant", "content": revised})

@@ -47,6 +47,18 @@ def load_agent():
 REQUIRED_TOOL_CAPABILITIES = ("length_recovery", "generation_evidence", "incremental_files")
 
 
+def _request_profile_for(worker, w):
+    """WORKER_REQUEST_PROFILES[worker] as a request fragment for the tool loop ({} when none)."""
+    from generation import SAMPLING_KEYS, apply_request_profile, worker_request_profile
+    prof = worker_request_profile(worker)
+    if not prof:
+        return {}
+    base = {"temperature": 0.2}
+    body = apply_request_profile(dict(base), prof, w.get("reasoning_style", "none"))
+    omit = [k for k in SAMPLING_KEYS if k in prof and prof[k] is None]
+    return {"request_overrides": body, "request_omit": omit}
+
+
 def runtime_info(agent=None):
     """Which tool runtime will run tool jobs, and what it declares it can do. Never raises.
     Pass the already-loaded module to avoid loading an external runtime twice."""
@@ -464,9 +476,13 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
         for index, evidence in enumerate(list(generations or [])[_seen:], start=_seen):
             emit("generation", index=index, evidence=evidence)
 
+    agent_worker = {"url": w["url"], "model": w["model"], "ctx": w.get("ctx", 8192), "slots": 2}
+    agent_worker.update(_request_profile_for(worker, w))
+    if agent_worker.get("request_overrides") or agent_worker.get("request_omit"):
+        emit("request_profile", overrides=agent_worker.get("request_overrides"),
+             omit=agent_worker.get("request_omit"))
     try:
-        res = agent.run(d, execution_id, job, {"url": w["url"], "model": w["model"],
-                                            "ctx": w.get("ctx", 8192), "slots": 2})
+        res = agent.run(d, execution_id, job, agent_worker)
     except RuntimeError as exc:
         _emit_generations((d.checkpoint(execution_id) or {}).get("generations"))
         emit("tool_loop_stop", reason=str(exc)[:200])

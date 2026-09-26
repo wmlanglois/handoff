@@ -49,6 +49,52 @@ def output_ceiling(worker, observed_prompt_tokens=None):
     return ceiling
 
 
+#: Sampling keys an operator may set per worker. A key set to None is NOT SENT, so the server's own
+#: configured value applies (e.g. a server launched with the model card's sampling).
+SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty")
+_PROFILE_KEYS = set(SAMPLING_KEYS) | {"think", "reasoning_effort", "thinking_budget"}
+
+
+def worker_request_profile(worker):
+    """Operator-owned request settings for WORKER calls (WORKER_REQUEST_PROFILES[worker]); {} when none,
+    which keeps the harness defaults (thinking off, temperature 0.6 chat / 0.2 tools). Health canaries
+    and qualification do not use it: thinking plus a tiny canary budget returns empty content and would
+    mark a healthy lane down."""
+    from fleet import setting
+    profiles = setting("WORKER_REQUEST_PROFILES", {})
+    if not isinstance(profiles, dict):
+        raise ValueError("WORKER_REQUEST_PROFILES must map worker names to settings")
+    prof = profiles.get(worker) or {}
+    if not isinstance(prof, dict):
+        raise ValueError("request profile for {0} must be a mapping".format(worker))
+    unknown = set(prof) - _PROFILE_KEYS
+    if unknown:
+        raise ValueError("request profile for {0} has unknown keys {1}; allowed {2}".format(
+            worker, sorted(unknown), sorted(_PROFILE_KEYS)))
+    return dict(prof)
+
+
+def apply_request_profile(body, profile, reasoning_style="none"):
+    """Merge a request profile into an OpenAI-style body (in place; also returned)."""
+    for key in SAMPLING_KEYS:
+        if key in profile:
+            if profile[key] is None:
+                body.pop(key, None)
+            else:
+                body[key] = profile[key]
+    think = bool((body.get("chat_template_kwargs") or {}).get("enable_thinking"))
+    if "think" in profile:
+        think = bool(profile["think"])
+        body.setdefault("chat_template_kwargs", {})["enable_thinking"] = think
+        if think:
+            body.pop("reasoning_budget", None)      # the budget_field style zeroes it only for think-off
+    if think and reasoning_style == "template_kwargs" and profile.get("reasoning_effort"):
+        body.setdefault("chat_template_kwargs", {})["reasoning_effort"] = profile["reasoning_effort"]
+    if think and reasoning_style == "budget_field" and type(profile.get("thinking_budget")) is int:
+        body["reasoning_budget"] = profile["thinking_budget"]
+    return body
+
+
 def response_evidence(response, request):
     choice = (response.get("choices") or [{}])[0]
     message = choice.get("message") or {}
@@ -72,6 +118,8 @@ def response_evidence(response, request):
         "requested_max_tokens": request.get("max_tokens"),
         "requested_max_completion_tokens": request.get("max_completion_tokens"),
         "temperature": request.get("temperature"),
+        "sampling": {k: request.get(k) for k in SAMPLING_KEYS if k in request},
+        "thinking": (request.get("chat_template_kwargs") or {}).get("enable_thinking"),
         "response_kind": ("length_limited" if reason == "length" else
                           "tool_calls" if message.get("tool_calls") else
                           "empty_visible_content" if not message.get("content") else "content"),

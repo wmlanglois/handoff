@@ -326,14 +326,22 @@ def _post_stream_with_prefill_lock(url, body, worker, timeout):
 
 
 def chat(worker, messages, tools=None, max_tokens=1024, think=False, temperature=0.6, timeout=300,
-         track=True, grammar=None, preserve_first_user=False):
+         track=True, grammar=None, preserve_first_user=False, profile=False):
     """One call path. Applies the context guard, the cluster prefill lock, and (llama) grammar. When
     track=True the dispatch is logged to the ledger and capped by max_inflight."""
     w = WORKERS[worker]
     original_message_count = len(messages)
     messages = fit_context(messages, w.get("ctx", 65536), max_tokens + 512,
                            preserve_first_user=preserve_first_user)
+    prof = {}
+    if profile:   # opt-in: worker calls only. Canaries/qualification keep fixed, safe settings.
+        from generation import worker_request_profile
+        prof = worker_request_profile(worker)
+        think = bool(prof.get("think", think))
     body = body_for(worker, messages, tools, max_tokens, think, temperature, grammar)
+    if prof:
+        from generation import apply_request_profile
+        apply_request_profile(body, prof, w.get("reasoning_style", "none"))
     jid = None
     if track:
         prompt = messages[-1].get("content", "") if messages else ""
@@ -359,7 +367,7 @@ def chat(worker, messages, tools=None, max_tokens=1024, think=False, temperature
         # this" has to present the capture; see the PROVENANCE block at the top of this module.
         cap = _record_capture(worker, w.get("model"), messages[-1].get("content", "") if messages else "",
                               msg.get("content") or "",
-                              {"temperature": temperature, "max_tokens": max_tokens,
+                              {"temperature": body.get("temperature"), "max_tokens": max_tokens,
                                "think": bool(think)})
         return msg, {"ms": round((time.time() - t) * 1000), "backend": w["kind"],
                      "capture": cap, "generation": generation}

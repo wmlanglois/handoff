@@ -406,7 +406,7 @@ def _workspace_lock_path(workspace_id):
     return ROOT / "runs" / "tool-ckpt" / safe / ".execution-lock"
 
 
-def run_tooljob(worker, brief, workspace_id, max_rounds=16, max_tokens=1400, stage=None,
+def run_tooljob(worker, brief, workspace_id, max_rounds=16, max_tokens=None, stage=None,
                 artifact=None, attempt=0, lineage=None, branch=False, draft_review=None):
     # Serialise the WHOLE invocation for this workspace, not just checkpoint writes: two runners of
     # the same tool workspace must never interleave, even when their checkpoints live in different
@@ -417,7 +417,7 @@ def run_tooljob(worker, brief, workspace_id, max_rounds=16, max_tokens=1400, sta
                                    attempt=attempt, lineage=lineage, branch=branch, draft_review=draft_review)
 
 
-def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1400, stage=None,
+def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=None, stage=None,
                         artifact=None, attempt=0, lineage=None, branch=False, draft_review=None):
     import hashlib
     agent = load_agent()                      # fails here, by name, if the dependency is unset
@@ -449,8 +449,8 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
             emit.close()
             raise RuntimeError("required project material failed to stage into the tool workspace: "
                                + ", ".join(failed))
-    from generation import worker_output_limit
-    max_tokens = worker_output_limit(worker, max_tokens)
+    from generation import TOOL_TURN_DEFAULT, worker_output_limit
+    max_tokens = worker_output_limit(worker, int(max_tokens or TOOL_TURN_DEFAULT))
     job = {"prompt": brief, "workspace_id": workspace_id, "max_rounds": max_rounds, "max_tokens": max_tokens}
     if draft_review:
         if _rt["kind"] == "bundled":
@@ -506,7 +506,7 @@ def _run_tooljob_locked(worker, brief, workspace_id, max_rounds=16, max_tokens=1
         agent_worker["api_key_env"] = w["api_key_env"]
     agent_worker.update(_request_profile_for(worker, w))
     from generation import request_timeout
-    agent_worker["request_timeout"] = request_timeout(worker, int(max_tokens or 1400))
+    agent_worker["request_timeout"] = request_timeout(worker, int(max_tokens))
     if agent_worker.get("request_overrides") or agent_worker.get("request_omit"):
         emit("request_profile", overrides=agent_worker.get("request_overrides"),
              omit=agent_worker.get("request_omit"))

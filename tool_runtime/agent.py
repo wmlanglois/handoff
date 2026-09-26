@@ -8,7 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import urllib.request
-from generation import response_evidence
+from generation import TOOL_TURN_DEFAULT, response_evidence
 
 #: What this runtime implements. tooljob records it per job and preflight refuses a tools-mode run
 #: on a runtime missing the required ones, so a less capable runtime is never used silently.
@@ -155,7 +155,7 @@ def run(dispatcher, execution_id, job, worker):
                                    "checkpoint preserved; no incomplete calls executed")
             request = {
                 "model": worker["model"], "messages": messages, "tools": tools,
-                "tool_choice": "auto", "max_tokens": int(job.get("max_tokens", 1400)),
+                "tool_choice": "auto", "max_tokens": int(job.get("max_tokens") or TOOL_TURN_DEFAULT),
                 "temperature": 0.2, "stream": False,
                 # #33: thinking OFF unless the harness's request profile says otherwise. Without this
                 # the server default applied -- thinking ON for Qwen3.x -- and hidden reasoning

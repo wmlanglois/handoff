@@ -1506,7 +1506,8 @@ def timeout_detail(exc, card):
         return ""
     worker = card.get("worker")
     tools = bool(card.get("tools"))
-    n = int(card.get("max_output_tokens") or (1400 if tools else _LOOP.worker_max_tokens))
+    from generation import TOOL_TURN_DEFAULT
+    n = int(card.get("max_output_tokens") or (TOOL_TURN_DEFAULT if tools else _LOOP.worker_max_tokens))
     try:
         from generation import request_timeout
         wait = request_timeout(worker, n, floor=300 if tools else 200)
@@ -2016,7 +2017,7 @@ def main():
         print("FLEET_OUTCOME=worker-unavailable")
         sys.exit(EXIT_CODES["worker-unavailable"])
     name = card["name"]; worker = card["worker"]; brief = card["brief"]
-    from generation import request_timeout, worker_output_limit
+    from generation import TOOL_TURN_DEFAULT, request_timeout, worker_output_limit
     # Pinned operator limit > this assignment's own budget (raised by an architect ADJUST from
     # recorded length-limited turns) > the harness default.
     worker_max_tokens = worker_output_limit(worker, int(card.get("max_output_tokens") or _LOOP.worker_max_tokens))
@@ -2182,7 +2183,7 @@ def main():
                 try:
                     r = tooljob.run_tooljob(worker, base + reject_tail, tool_workspace_id(name),
                                             max_rounds=card.get("max_tool_rounds", 12),
-                                            max_tokens=int(card.get("max_output_tokens") or 1400),
+                                            max_tokens=int(card.get("max_output_tokens") or TOOL_TURN_DEFAULT),
                                             stage=_stage or None, artifact=_art, attempt=rnd,
                                             lineage=_tool_lineage_token(ws),
                                             branch=bool(card.get("branch")),

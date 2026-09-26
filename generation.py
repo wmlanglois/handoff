@@ -49,8 +49,12 @@ def output_ceiling(worker, observed_prompt_tokens=None):
     return ceiling
 
 
-#: Harness default output allowance per model turn in tools mode (run/verified.py, tool jobs).
-TOOL_TURN_DEFAULT = 1400
+#: Harness default output allowance per model turn in tools mode -- the ONE source for the tool
+#: loop, verified.py, tooljob and the queue. It was a hard-coded 1400 in six places: a third of the
+#: chat default, so every first write of a real file was cut off once before an ADJUST raised it.
+#: Same as the chat default (loop_config.worker_max_tokens). The architect can still raise it per
+#: assignment from evidence (ADJUST), and an operator pin (WORKER_OUTPUT_LIMITS) still wins.
+TOOL_TURN_DEFAULT = 4096
 #: Rough tokens per line of delivered Python, for sizing packets against output budgets.
 TOKENS_PER_LINE = 12
 

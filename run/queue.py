@@ -710,7 +710,7 @@ def packet_wall_clock(card, max_rounds, remaining_s=None):
     import generation
     worker = card.get("worker")
     tools = bool(card.get("tools"))
-    n = int(card.get("max_output_tokens") or (1400 if tools else 4096))
+    n = int(card.get("max_output_tokens") or (generation.TOOL_TURN_DEFAULT if tools else 4096))
     per_request = generation.request_timeout(worker, n, floor=300 if tools else 200)
     want = max(DEFAULT_PACKET_SECONDS, int(max_rounds) * TURNS_PER_ROUND * per_request)
     cap = int(setting("PACKET_MAX_SECONDS", 7200) or 7200)

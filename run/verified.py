@@ -758,6 +758,11 @@ ORACLE_CHECK = "card_oracle"     # the slot the card's frozen oracle occupies in
 # per-round copy under attempts/) as evidence made a non-tool worker's identical reply look like
 # investigation, so the loop spent its whole budget on a check that never moved.
 LOOP_FILES = {"result.json", "receipt.md", "receipt.json", "output.md"}
+#: Bookkeeping that tools and the interpreter write as a side effect of ANY call (#34). The tool
+#: service writes .receipts/ entries for every call, even a read, so counting them made every round
+#: with a tool call look like "new evidence" and kept a stuck packet running to its round cap.
+BOOKKEEPING_DIRS = {".receipts", "__pycache__", ".pytest_cache", ".execution-lock"}
+BOOKKEEPING_SUFFIXES = (".pyc", ".lock", ".tmp")
 
 
 def criteria_from_card(card):
@@ -848,7 +853,9 @@ def workspace_evidence(root, artifacts=()):
     if not base.is_dir():
         return frozenset()
     skip = {Path(a).name for a in artifacts} | LOOP_FILES
-    files = [f for f in sorted(base.rglob("*")) if f.is_file() and f.name not in skip]
+    files = [f for f in sorted(base.rglob("*")) if f.is_file() and f.name not in skip
+             and not (set(f.relative_to(base).parts[:-1]) & BOOKKEEPING_DIRS)
+             and f.name not in BOOKKEEPING_DIRS and not f.name.endswith(BOOKKEEPING_SUFFIXES)]
     return frozenset(f"tool:{Path(p).relative_to(base).as_posix()}#{h[:12]}"
                      for p, h in progress.hash_files(files).items())
 
@@ -1475,6 +1482,16 @@ def _keep_artifact(ws, output, previous, artifact="output.md", rnd=None):
     return output or ""
 
 
+def _investigation_budget(budget, max_rounds, k):
+    """#34: a budget at or above the round cap can never fire, leaving the cap as the only brake.
+    Clamp it below the cap (never below the stagnation window); 0/None still disables it."""
+    if not budget:
+        return None
+    if max_rounds and budget >= max_rounds:
+        return max(int(k or 1), int(max_rounds) - 1)
+    return budget
+
+
 def timeout_detail(exc, card):
     """A request timeout on the worker call, described for the architect -- or "" if `exc` is not one.
 
@@ -1521,6 +1538,7 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
     outcome, basis, rnd = PARK_MAX_ROUNDS, "round budget exhausted", 0
     results = {}
     last_fail_reason = None          # O4: the previous round's mechanical failure reason
+    repeat_prev = None               # #34: (artifact hashes, failure reason) of the previous round
     assisted_reasons = set()         # O4: reasons a diagnostic review has already been spent on
     seen_fail = set()                # O4: failure reasons seen in a PRIOR round (repetition, incl. thrashing)
     recovery = []                    # O4: recovery-transition records, for attribution
@@ -1613,12 +1631,26 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
         snap = snapshot(review_root, artifacts, oracle_ok, results, hooks.evidence(review_root),
                         in_flight=in_flight or (), outcome=output)
         d = progress.delta(prev, snap)
+        if delivery and d.new_evidence:
+            # A round that delivered nothing (tool limit, context capacity, timeout) did not
+            # investigate anything, whatever files appeared (#34).
+            import dataclasses as _dc
+            d = _dc.replace(d, new_evidence=frozenset())
         prev = snap
         snaps.append(snap); deltas.append(d)
         st = grounding.status(criteria, results)
         judge_accepts = bool(ruling) and ruling.strip().upper().startswith("ACCEPT")
         action, basis = decide(deltas, judge_accepts, oracle_ok, st, results=results, k=k,
                                investigation_budget=investigation_budget)
+        # #34: the same artifact bytes failing for the same reason twice is not progress, however
+        # many other files appeared. Park so the architect decides with the real failure text.
+        this_round = (tuple(sorted(snap.artifacts.items())), None if oracle_ok else (reason or "").strip()[:400])
+        if (action == CONTINUE and not oracle_ok and repeat_prev is not None and this_round == repeat_prev
+                and not d.achievement):
+            action = PARK_STAGNANT
+            basis = "unchanged artifact, repeated failure: " + (reason or "")[:300]
+            emit("repeat_failure_park", round=rnd, reason=(reason or "")[:300])
+        repeat_prev = this_round
         if action == ACCEPTED:
             import projectpkg
             blob = output or ""
@@ -2327,7 +2359,8 @@ def main():
 
     r = run_loop(card, ws, hooks, emit=emit, max_rounds=a.max_rounds, criteria=criteria,
                  guidance=guidance, k=a.stagnation_k,
-                 investigation_budget=(a.investigation_budget or None), receipt=receipt)
+                 investigation_budget=_investigation_budget(a.investigation_budget, a.max_rounds, a.stagnation_k),
+                 receipt=receipt)
     print("\n" + r["receipt"].render())
     preserve(r["outcome"], EXIT_CODES.get(r["outcome"], 1), r["rounds"], r["best_artifact"],
              r["history"], r["basis"])

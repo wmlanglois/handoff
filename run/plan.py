@@ -129,6 +129,21 @@ def contract_brief(contract, goal_text=None):
     if goal_text:
         parts += [f"This advances the approved goal: {goal_text}",
                   f"Specifically criterion {c['criterion_id']}.", ""]
+    # INTERFACE (#42): the exact public call(s) this outcome must expose and who calls them. The
+    # hidden oracle checks exactly this interface; before 2026-09-26 it never reached the worker, so
+    # workers guessed call shapes (check_fn() vs check_fn(lane); list vs dict) and failed identically
+    # across runs even after the contract was corrected.
+    provides = str(c.get("provides") or "").strip()
+    consumer = str(c.get("consumer") or "").strip()
+    if provides or consumer:
+        iface = ["INTERFACE YOU MUST PROVIDE (binding; callers use it exactly as written):"]
+        if provides:
+            iface.append("- Provides: " + provides)
+        if consumer:
+            iface.append("- Called by: " + consumer)
+        iface.append("- Match every name, argument (including how any callable you are given is "
+                     "invoked) and return type exactly; do not rename, reorder or reshape it.")
+        parts += iface + [""]
     if c["decides_alone"]:
         parts += ["You decide these WITHOUT asking: " + "; ".join(c["decides_alone"]), ""]
     if c["keep_compatible"]:

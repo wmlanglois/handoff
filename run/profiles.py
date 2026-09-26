@@ -79,8 +79,8 @@ def classify(outcome, result=None):
     o = (outcome or "").strip()
     if o == "accepted":
         return ACCEPTED
-    if o in ("worker-unavailable", "CRASH"):
-        return INFRA
+    if o in ("worker-unavailable", "CRASH", "parked-timeout"):
+        return INFRA            # parked-timeout: the harness stopped waiting; says nothing about competence
     if o == "parked-undefined":
         return MISSING
     if o in ("parked-stagnant", "parked-max-rounds", "parked-unsupported"):

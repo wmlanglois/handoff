@@ -1026,11 +1026,12 @@ PARK_UNDEFINED = "parked-undefined"     # a criterion exists but its target was 
 PARK_UNSUPPORTED = "parked-unsupported" # the checks passed but no evidence binds the artifact
 PARK_STAGNANT = "parked-stagnant"
 PARK_MAX_ROUNDS = "parked-max-rounds"
+PARK_TIMEOUT = "parked-timeout"         # the packet's wall clock ran out: a harness wait, not a down lane (#35)
 
 # Every decision the loop may stop on. CONTINUE is the only non-terminal action, so any
 # new outcome belongs here unless it explicitly means "go round again".
 TERMINAL = frozenset({ACCEPTED, AWAITING_REVIEW, PARK_UNDEFINED, PARK_UNSUPPORTED,
-                      PARK_STAGNANT})
+                      PARK_STAGNANT, PARK_TIMEOUT})
 
 
 def decide(deltas, judge_accepts, oracle_ok, crit_status, results=None, k=3,
@@ -1517,7 +1518,8 @@ def timeout_detail(exc, card):
 
 
 def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guidance="",
-             k=3, investigation_budget=None, receipt=None, require_evidence=None, job_id=None):
+             k=3, investigation_budget=None, receipt=None, require_evidence=None, job_id=None,
+             deadline_s=None):
     """Run the rounds and return the run record. The caller owns process exit codes and printing.
 
     Returns {outcome, rounds, best_artifact, history, receipt, deltas, snapshots, basis}."""
@@ -1543,7 +1545,24 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
     seen_fail = set()                # O4: failure reasons seen in a PRIOR round (repetition, incl. thrashing)
     recovery = []                    # O4: recovery-transition records, for attribution
 
+    _t_start = time.time()
+    _round_secs = []
     for rnd in range(1, max_rounds + 1):
+        # #35: stop BETWEEN rounds when another round would not finish inside the packet's wall
+        # clock, and say so -- instead of being killed mid-round with no record, which the queue then
+        # filed as worker-unavailable (infrastructure).
+        if deadline_s and rnd > 1:
+            elapsed = time.time() - _t_start
+            need = max(_round_secs) if _round_secs else 0
+            if elapsed + need > deadline_s:
+                outcome = PARK_TIMEOUT
+                basis = ("packet wall clock: {0:.0f}s used of {1:.0f}s and the longest round took {2:.0f}s; "
+                         "stopped before round {3} (a harness deadline, not a down lane)".format(
+                             elapsed, deadline_s, need, rnd))
+                emit("deadline_park", round=rnd, elapsed=round(elapsed), deadline=deadline_s)
+                rnd -= 1
+                break
+        _round_t0 = time.time()
         round_recovery = None
         recovery_extra = ""
         try:
@@ -1747,6 +1766,7 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
             else:
                 basis += "; " + why
 
+        _round_secs.append(time.time() - _round_t0)
         if action in TERMINAL:
             outcome = action
             break
@@ -1766,7 +1786,7 @@ def run_loop(card, ws, hooks, emit=_noop_emit, max_rounds=5, criteria=None, guid
 # (code 1/2 -> queue._classify -> parked/) so a person sees them instead of the run reading
 # as a clean success.
 EXIT_CODES = {ACCEPTED: 0, PARK_MAX_ROUNDS: 1, PARK_STAGNANT: 2, "worker-unavailable": 3,
-              AWAITING_REVIEW: 1, PARK_UNDEFINED: 1, PARK_UNSUPPORTED: 1}
+              AWAITING_REVIEW: 1, PARK_UNDEFINED: 1, PARK_UNSUPPORTED: 1, PARK_TIMEOUT: 2}
 
 
 def _claim_still_held(card_path, controller, token):
@@ -1949,6 +1969,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("card")
     ap.add_argument("--max-rounds", type=int, default=5)
+    ap.add_argument("--deadline-seconds", type=float, default=None,
+                    help="stop between rounds when another round would not finish inside this many "
+                         "seconds (the dispatcher's packet wall clock); outcome parked-timeout")
     ap.add_argument("--resume", action="store_true",
                     help="continue a parked/halted job, carrying its last correction forward")
     ap.add_argument("--stagnation-k", type=int, default=3,
@@ -2358,6 +2381,7 @@ def main():
                   capture=live_capture)
 
     r = run_loop(card, ws, hooks, emit=emit, max_rounds=a.max_rounds, criteria=criteria,
+                 deadline_s=(a.deadline_seconds or None),
                  guidance=guidance, k=a.stagnation_k,
                  investigation_budget=_investigation_budget(a.investigation_budget, a.max_rounds, a.stagnation_k),
                  receipt=receipt)

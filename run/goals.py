@@ -78,6 +78,7 @@ OUTCOME_EFFECT = {
     "parked-unsupported": PARKED,
     "parked-stagnant": PARKED,
     "parked-max-rounds": PARKED,
+    "parked-timeout": PARKED,           # the packet's wall clock ran out: a harness wait, not the fleet (#35)
     "worker-unavailable": "retry",      # not a criterion state: the fleet failed, not the work
 }
 

@@ -269,7 +269,7 @@ def classify_failure(text):
     t = (text or "").lower()
     if not t.strip():
         return UNKNOWN, "INVESTIGATE the failure: no failure text was recorded to act on"
-    if "timeout:" in t or "request timeouts" in t or "timed out" in t:
+    if "timeout:" in t or "request timeouts" in t or "timed out" in t or "wall clock" in t or "parked-timeout" in t:
         return REQUEST_TIMEOUT, ("ADJUST max_output_tokens DOWN so a turn fits the wait (the worker then "
                                  "writes in sections), or PARK a question for the operator about the lane's "
                                  "min_tokens_per_s: the harness stopped waiting; the lane is not shown to be down")

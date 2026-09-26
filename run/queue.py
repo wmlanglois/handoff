@@ -668,6 +668,7 @@ OUTCOME_DIR = {
     "parked-unsupported": "parked",   # checks passed, nothing bound the bytes to the work
     "parked-stagnant": "parked",
     "parked-max-rounds": "parked",
+    "parked-timeout": "parked",       # the packet wall clock ran out (#35); never worker-unavailable
     "worker-unavailable": "ready",      # retryable: the worker was down, the job was not wrong
 }
 
@@ -696,6 +697,46 @@ def _classify(rc, stdout, stderr):
     if rc == 3:
         return "failed", "worker-unavailable"
     return "failed", f"exit{rc}"
+
+DEFAULT_PACKET_SECONDS = 1800
+TURNS_PER_ROUND = 3
+
+
+def packet_wall_clock(card, max_rounds, remaining_s=None):
+    """Seconds one packet may run (#35). Sized from its own output allowance -- rounds x a few
+    turns x the per-request wait that allowance needs -- never below the old 1800 s, never above
+    PACKET_MAX_SECONDS (default 7200) or the drain's remaining time budget."""
+    from fleet import setting
+    import generation
+    worker = card.get("worker")
+    tools = bool(card.get("tools"))
+    n = int(card.get("max_output_tokens") or (1400 if tools else 4096))
+    per_request = generation.request_timeout(worker, n, floor=300 if tools else 200)
+    want = max(DEFAULT_PACKET_SECONDS, int(max_rounds) * TURNS_PER_ROUND * per_request)
+    cap = int(setting("PACKET_MAX_SECONDS", 7200) or 7200)
+    wall = min(want, cap)
+    if remaining_s is not None and remaining_s > 0:
+        wall = min(wall, max(DEFAULT_PACKET_SECONDS, int(remaining_s)))
+    return int(wall)
+
+
+def _record_timeout(name, wall, sec):
+    """A killed packet wrote no result.json; write one so readers see parked-timeout, not a
+    directory fallback to worker-unavailable."""
+    d = fleet_runs_root() / ("verified-" + name)
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "result.json"
+    try:
+        prior = json.loads(p.read_text(encoding="utf-8"))
+        if prior.get("outcome") and os.path.getmtime(p) >= time.time() - sec:
+            return                               # the run recorded its own outcome in time
+    except (OSError, ValueError):
+        pass
+    p.write_text(json.dumps({"outcome": "parked-timeout", "rounds": None,
+                             "basis": "the dispatcher's packet wall clock ({0}s) ran out after {1}s; the "
+                                      "run was stopped mid-round (a harness wait, not a down lane)".format(wall, sec)}),
+                 encoding="utf-8")
+
 
 def drain(workers, max_rounds, max_seconds, redo_mode):
     _ensure()
@@ -749,18 +790,23 @@ def drain(workers, max_rounds, max_seconds, redo_mode):
                                          "ts": _now()}) + "\n")
             print(f"  [abandoned] {worker:<7} {name:<22} claim lost before execution", flush=True)
             return
+        wall = packet_wall_clock(card, max_rounds,
+                                 remaining_s=(max_seconds - (time.time() - t0)) if max_seconds else None)
         cmd = [sys.executable, str(ROOT / "run" / "verified.py"), str(tmp), "--max-rounds", str(max_rounds),
-               "--claim-token", token, "--claim-controller", CONTROLLER]
+               "--claim-token", token, "--claim-controller", CONTROLLER,
+               "--deadline-seconds", str(max(60, wall - 120))]
         if redo_mode:
             cmd += ["--redo-mode", redo_mode]
         t = time.time()
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=wall)
             dest_dir, outcome = _classify(r.returncode, r.stdout, r.stderr)
             err_tail = (r.stderr or "").strip()
         except subprocess.TimeoutExpired as e:
-            dest_dir, outcome = "failed", "TIMEOUT"
+            # #35: a harness wait, recorded as such -- never worker-unavailable / infrastructure.
+            dest_dir, outcome = "parked", "parked-timeout"
             err_tail = ((e.stderr or "") if isinstance(e.stderr, str) else "")[-800:]
+            _record_timeout(name, wall, round(time.time() - t))
         sec = round(time.time() - t)
         # Validate ownership AND move under the one ownership lock, so a reclaim cannot interleave
         # between the check and the settle. If we no longer own it (reclaimed while the job ran),

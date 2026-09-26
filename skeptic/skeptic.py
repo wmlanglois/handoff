@@ -109,8 +109,8 @@ SYSTEM_CHALLENGE = (
 "or restate. Call done with 2-3 challenges, each naming the exact behavior you read (file:line), the "
 "assumption it breaks, and one sharp question for the architect to answer. When the claim states a "
 "number, check it with calc. Reading the file shows what the file contains. An ACCEPTANCE CONTRACT "
-"supplied with the claim (criterion, interface, oracle, failure output) is the bar, not rationale: "
-"compare the artifact against it, above all how the oracle calls the code.")
+"supplied with the claim (criterion, interface, oracle, failure output) is context for your questions, "
+"not rationale and not a checklist to grade against.")
 
 def review_read_instruction(artifact=None):
     """What the review skeptic is told to read FIRST. Names the ACTUAL deliverable when known, so the

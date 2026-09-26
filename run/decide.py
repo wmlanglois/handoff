@@ -1351,12 +1351,11 @@ def challenge(decision, delta, worker=SKEPTIC_WORKER, root=None, rounds=CHALLENG
               "unavailable say so; do not infer missing work from missing access.")
     contract = challenge_contract(decision, delta, target)
     if contract:
-        claim += ("\n\n" + contract + "\nCompare the artifact under your root against this contract: "
-                  "every name, argument and return the oracle uses must match the code (file:line).")
+        claim += ("\n\n" + contract + "\nThis is context so your questions are about the real work; "
+                  "you question the decision, you do not check or grade the artifact.")
     if not _root_has_deliverables(evidence_root):
         claim += ("\n\nNOTE: your review root holds no deliverable files yet (nothing has been promoted). "
-                  "That absence is not evidence about the work; say review unavailable for the artifact "
-                  "and challenge the decision against the contract above instead.")
+                  "That absence is not evidence about the work; question the decision itself instead.")
     try:
         # Root the skeptic AT THE ARTIFACT. The first live run rooted it at the repo, where
         # the delivered file does not exist, and it produced three confident challenges
